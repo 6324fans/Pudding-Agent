@@ -47,8 +47,13 @@ if (existsSync(wasmSrc)) {
 // Copy UI dist to packages/electron/ui/ for production loadFile path
 const uiSrc = path.join(rootDir, 'packages/ui/dist')
 const uiDst = path.join(__dirname, 'ui')
-if (existsSync(uiSrc)) {
-  rmSync(uiDst, { recursive: true, force: true })
-  mkdirSync(uiDst, { recursive: true })
-  cpSync(uiSrc, uiDst, { recursive: true })
+const uiIndex = path.join(uiSrc, 'index.html')
+if (!existsSync(uiIndex)) {
+  throw new Error(
+    `UI build output is missing at ${uiIndex}. Run "corepack pnpm build:ui" before building Electron.`
+  )
 }
+
+rmSync(uiDst, { recursive: true, force: true })
+mkdirSync(uiDst, { recursive: true })
+cpSync(uiSrc, uiDst, { recursive: true })

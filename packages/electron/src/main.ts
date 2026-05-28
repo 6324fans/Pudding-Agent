@@ -48,7 +48,6 @@ const gitService = new GitService()
 const appLauncher = new AppLauncher()
 const terminalService = new TerminalService()
 const pluginMarketplaceService = new PluginMarketplaceService()
-const APP_VERSION = '1.0.0'
 
 // Auto-updater setup
 autoUpdater.autoDownload = false
@@ -92,7 +91,7 @@ function setupAutoUpdater(win: BrowserWindow) {
   })
 }
 
-ipcMain.handle('app:version', () => APP_VERSION)
+ipcMain.handle('app:version', () => app.getVersion())
 
 app.whenReady().then(async () => {
   if (process.platform === 'darwin') {

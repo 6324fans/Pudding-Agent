@@ -1,14 +1,14 @@
 {
   "name": "pudding-agent",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "packageManager": "pnpm@10.34.1",
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "predev": "node -e \"const{existsSync}=require('fs');const p='packages/electron/resources/codegraph/VERSION';if(!existsSync(p)){console.log('[predev] CodeGraph not found, fetching...');const{execSync}=require('child_process');execSync('corepack pnpm fetch-codegraph',{stdio:'inherit'})}else{console.log('[predev] CodeGraph already fetched, skipping.')}\"",
     "fetch-codegraph": "tsx scripts/fetch-codegraph.ts",
-    "build": "corepack pnpm -r build",
-    "build:electron": "corepack pnpm --filter puddingagent build",
+    "build": "corepack pnpm --filter @puddingagent/core build && corepack pnpm build:ui && corepack pnpm --filter puddingagent build && corepack pnpm --filter ./packages/vscode-extension build",
+    "build:electron": "corepack pnpm --filter @puddingagent/core build && corepack pnpm build:ui && corepack pnpm --filter puddingagent build",
     "build:ui": "corepack pnpm --filter @puddingagent/ui build",
     "package": "corepack pnpm build && node scripts/fix-node-pty-permissions.mjs && electron-builder --publish never",
     "test": "corepack pnpm --filter @puddingagent/core test",

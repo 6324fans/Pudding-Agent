@@ -6,6 +6,7 @@ let mainWindow: BrowserWindow | null = null
 
 export function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, 'preload.js')
+  const rendererPath = path.join(__dirname, '../ui/index.html')
 
   const iconPath = path.join(__dirname, '../../assets/icon.png')
 
@@ -28,19 +29,31 @@ export function createMainWindow(): BrowserWindow {
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173')
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../ui/index.html'))
+    if (!existsSync(rendererPath)) {
+      console.error(`[Pudding-Agent] renderer entry is missing: ${rendererPath}`)
+    }
+    mainWindow.loadFile(rendererPath).catch((err) => {
+      console.error('[Pudding-Agent] failed to load renderer:', err)
+    })
   }
 
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const levels = ['log', 'warn', 'error', 'debug'] as const
+    const levelName = levels[level] ?? level
+    if (process.env.NODE_ENV === 'development' || levelName === 'error' || levelName === 'warn') {
+      console.log(`[renderer:${levelName}] ${message} (${sourceId}:${line})`)
+    }
+  })
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[Pudding-Agent] failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[Pudding-Agent] renderer process gone:', details)
+  })
+
   if (process.env.NODE_ENV === 'development') {
-    mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-      const levels = ['log', 'warn', 'error', 'debug'] as const
-      console.log(`[renderer:${levels[level] ?? level}] ${message} (${sourceId}:${line})`)
-    })
-
-    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-      console.error(`[Pudding-Agent] failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
-    })
-
     mainWindow.webContents.on('did-finish-load', () => {
       mainWindow?.webContents.executeJavaScript('typeof window.electronAPI').then((result) => {
         if (result !== 'object') {
