@@ -9,6 +9,8 @@ import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.net.ServerSocket
 import java.util.concurrent.ConcurrentHashMap
 
@@ -26,11 +28,19 @@ class IdeWebSocketServer(private val rpcHandler: RpcHandler) {
             routing {
                 webSocket("/") {
                     clients.add(this)
+                    val sendMutex = Mutex()
                     try {
                         for (frame in incoming) {
                             if (frame is Frame.Text) {
-                                val response = handleMessage(frame.readText())
-                                if (response != null) send(Frame.Text(response))
+                                val raw = frame.readText()
+                                launch {
+                                    val response = handleMessage(raw)
+                                    if (response != null) {
+                                        sendMutex.withLock {
+                                            send(Frame.Text(response))
+                                        }
+                                    }
+                                }
                             }
                         }
                     } finally {

@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.project.ProjectManagerListener
 import com.puddingagent.ide.handlers.DiagnosticsHandler
+import com.puddingagent.ide.handlers.DiffHandler
 import com.puddingagent.ide.handlers.OpenFileHandler
 import com.puddingagent.ide.notifications.AtMentionAction
 import com.puddingagent.ide.notifications.SelectionTracker
@@ -24,7 +25,7 @@ class PuddingagentPlugin : AppLifecycleListener {
     override fun appFrameCreated(commandLineArgs: MutableList<String>) {
         productInfo = currentIdeProductInfo()
         lockfile = LockfileManager()
-        val rpcHandler = RpcHandler(lockfile!!.authToken, productInfo!!, OpenFileHandler(), DiagnosticsHandler())
+        val rpcHandler = RpcHandler(lockfile!!.authToken, productInfo!!, OpenFileHandler(), DiagnosticsHandler(), DiffHandler())
         server = IdeWebSocketServer(rpcHandler)
 
         val port = server!!.start()
