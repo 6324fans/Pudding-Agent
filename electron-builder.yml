@@ -17,8 +17,8 @@ extraResources:
     to: codegraph
 publish:
   provider: github
-  owner: u53
-  repo: PUDDINGAGENT
+  owner: 6324fans
+  repo: Pudding-Agent
 mac:
   icon: assets/icon.icns
   category: public.app-category.developer-tools

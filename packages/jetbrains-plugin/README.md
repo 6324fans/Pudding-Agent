@@ -26,7 +26,7 @@ JetBrains IDE 与 Pudding-Agent 桌面应用之间的双向通信插件。
 
 ## 安装
 
-1. 从 [GitHub Releases](https://github.com/u53/PUDDINGAGENT/releases) 下载最新的 `pudding-agent-x.x.x.zip` 文件
+1. 从 [GitHub Releases](https://github.com/6324fans/Pudding-Agent/releases) 下载最新的 `pudding-agent-x.x.x.zip` 文件
 2. 打开 IDE → Settings → Plugins → ⚙️ → Install Plugin from Disk...
 3. 选择下载的 .zip 文件
 4. 重启 IDE

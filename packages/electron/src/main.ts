@@ -53,6 +53,22 @@ const pluginMarketplaceService = new PluginMarketplaceService()
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = true
 
+function getUpdaterErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+
+  if (/404|not found|releases\.atom|cannot find latest|no published versions/i.test(raw)) {
+    return '未找到更新发布源，请确认 GitHub Releases 已发布后再试。'
+  }
+  if (/401|403|authentication token|authorization|forbidden|unauthorized/i.test(raw)) {
+    return '无法访问更新发布源，请检查 GitHub 发布配置或访问权限。'
+  }
+  if (/ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|network|timeout|socket|certificate/i.test(raw)) {
+    return '网络连接异常，请检查网络后重试。'
+  }
+
+  return '检查更新失败，请稍后重试。'
+}
+
 function setupAutoUpdater(win: BrowserWindow) {
   autoUpdater.on('update-available', (info) => {
     win.webContents.send('updater:available', { version: info.version })
@@ -67,7 +83,9 @@ function setupAutoUpdater(win: BrowserWindow) {
     win.webContents.send('updater:downloaded')
   })
   autoUpdater.on('error', (err) => {
-    win.webContents.send('updater:error', { message: err.message })
+    const message = getUpdaterErrorMessage(err)
+    console.error('[Pudding-Agent] updater error:', message)
+    win.webContents.send('updater:error', { message })
   })
 
   // Auto-check on launch (delay 5s) + every 30 minutes
@@ -78,8 +96,8 @@ function setupAutoUpdater(win: BrowserWindow) {
     try {
       const result = await autoUpdater.checkForUpdates()
       return { version: result?.updateInfo.version || null }
-    } catch (err: any) {
-      return { version: null, error: err.message }
+    } catch (err: unknown) {
+      return { version: null, error: getUpdaterErrorMessage(err) }
     }
   })
   ipcMain.handle('updater:download', async () => {

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/u53/puddingagent/releases"><img src="https://img.shields.io/github/v/release/u53/puddingagent?style=flat-square&color=blue" alt="Release"></a>
+  <a href="https://github.com/6324fans/Pudding-Agent/releases"><img src="https://img.shields.io/github/v/release/6324fans/Pudding-Agent?style=flat-square&color=blue" alt="Release"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/electron-33-47848F?style=flat-square&logo=electron" alt="Electron">
   <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react" alt="React">
@@ -34,7 +34,7 @@ Think of it as an AI teammate that sits next to you: it reads your code, searche
 
 ### 1. Install
 
-Download the latest release from [GitHub Releases](https://github.com/u53/puddingagent/releases).
+Download the latest release from [GitHub Releases](https://github.com/6324fans/Pudding-Agent/releases).
 
 **macOS** — the app is not code-signed. If macOS blocks it:
 

@@ -6,7 +6,7 @@
   "publisher": "puddingagent",
   "repository": {
     "type": "git",
-    "url": "https://github.com/u53/PUDDINGAGENT"
+    "url": "https://github.com/6324fans/Pudding-Agent"
   },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],

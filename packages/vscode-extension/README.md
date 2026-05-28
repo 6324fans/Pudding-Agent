@@ -12,7 +12,7 @@ VS Code 与 Pudding-Agent 桌面应用之间的双向通信扩展。
 
 ## 安装
 
-1. 从 [GitHub Releases](https://github.com/u53/PUDDINGAGENT/releases) 下载最新的 `.vsix` 文件
+1. 从 [GitHub Releases](https://github.com/6324fans/Pudding-Agent/releases) 下载最新的 `.vsix` 文件
 2. 在终端执行:
 
 ```bash

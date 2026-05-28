@@ -90,7 +90,7 @@ export function HelpDialog({ visible, onClose }: Props) {
               <HelpRow cmd="选中代码" desc="IDE 中选中代码后发消息，AI 可看到选中内容（一次性）" />
             </div>
             <p className="text-[11px] text-[#555] mt-2">
-              下载地址: <a href="https://github.com/u53/PUDDINGAGENT/releases" target="_blank" className="text-[#888] underline hover:text-[#EAEAEA]">GitHub 发布页</a>
+              下载地址: <a href="https://github.com/6324fans/Pudding-Agent/releases" target="_blank" className="text-[#888] underline hover:text-[#EAEAEA]">GitHub 发布页</a>
             </p>
           </section>
         </div>
