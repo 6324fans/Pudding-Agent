@@ -1,0 +1,18 @@
+packages:
+  - packages/*
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - keytar
+  - node-pty
+
+ignoredBuiltDependencies:
+  - '@vscode/vsce-sign'
+
+allowBuilds:
+  '@vscode/vsce-sign': true
+  electron: true
+  esbuild: true
+  keytar: true
+  node-pty: true

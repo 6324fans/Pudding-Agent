@@ -1,0 +1,41 @@
+appId: com.pudding.agent
+productName: Pudding-Agent
+artifactName: "Pudding-Agent-${version}-${arch}-${os}.${ext}"
+electronVersion: "33.4.11"
+npmRebuild: true
+directories:
+  output: out
+  app: packages/electron
+  buildResources: assets
+files:
+  - dist/**/*
+  - ui/**/*
+  - package.json
+  - node_modules/node-pty/**/*
+extraResources:
+  - from: packages/electron/resources/codegraph
+    to: codegraph
+publish:
+  provider: github
+  owner: u53
+  repo: PUDDINGAGENT
+mac:
+  icon: assets/icon.icns
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.plist
+  notarize: false
+  target:
+    - dmg
+    - zip
+win:
+  icon: assets/icon.ico
+  target:
+    - nsis
+linux:
+  icon: assets/icon.png
+  target:
+    - AppImage
+    - deb

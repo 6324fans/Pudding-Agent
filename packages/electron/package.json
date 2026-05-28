@@ -1,0 +1,27 @@
+{
+  "name": "puddingagent",
+  "version": "1.0.0",
+  "description": "Pudding-Agent - AI-powered coding assistant desktop app",
+  "author": "Pudding-Agent Team",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "node build.mjs && NODE_ENV=development electron dist/main.js",
+    "build": "node build.mjs",
+    "start": "electron dist/main.js"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.1",
+    "@puddingagent/core": "workspace:*",
+    "@types/uuid": "^11.0.0",
+    "electron": "^33.0.0",
+    "electron-store": "^10.0.0",
+    "esbuild": "^0.24.0",
+    "uuid": "^11.1.1"
+  }
+}

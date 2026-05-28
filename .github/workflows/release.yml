@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install setuptools
+
+      - run: pnpm install
+
+      - run: pnpm build
+
+      - name: Fetch CodeGraph binaries
+        run: pnpm fetch-codegraph
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import signing certificate
+        run: |
+          echo "$CSC_LINK" | base64 --decode > cert.p12
+          security create-keychain -p "actions" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "actions" build.keychain
+          security import cert.p12 -k build.keychain -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "actions" build.keychain
+          defaults write com.apple.security.revocation OCSPStyle -string None
+          defaults write com.apple.security.revocation CRLStyle -string None
+          rm cert.p12
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Package
+        run: pnpm package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        timeout-minutes: 5
+
+      - name: Upload Mac artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*.dmg
+            out/*.zip
+            out/*.blockmap
+            out/latest-mac.yml
+
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install setuptools
+
+      - run: pnpm install
+
+      - run: pnpm build
+
+      - name: Fetch CodeGraph binaries
+        run: pnpm fetch-codegraph
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package
+        run: pnpm package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*.exe
+            out/*.blockmap
+            out/latest.yml
+
+  release-vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: cd packages/vscode-extension && npm install
+
+      - name: Build
+        run: cd packages/vscode-extension && npm run build
+
+      - name: Package
+        run: cd packages/vscode-extension && npx @vscode/vsce package --no-dependencies
+
+      - name: Upload VS Code extension
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/vscode-extension/*.vsix
+
+  release-jetbrains:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build Plugin
+        run: cd packages/jetbrains-plugin && ./gradlew buildPlugin
+
+      - name: Upload JetBrains plugin
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/jetbrains-plugin/build/distributions/*.zip

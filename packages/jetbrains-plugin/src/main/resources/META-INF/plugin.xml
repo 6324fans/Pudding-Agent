@@ -1,0 +1,22 @@
+<idea-plugin>
+    <id>com.puddingagent.ide</id>
+    <name>Pudding-Agent</name>
+    <vendor>PUDDINGAGENT</vendor>
+    <description>Bidirectional communication between Pudding-Agent and JetBrains IDEs</description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <applicationListeners>
+        <listener class="com.puddingagent.ide.PuddingagentPlugin"
+                  topic="com.intellij.ide.AppLifecycleListener"/>
+    </applicationListeners>
+
+    <actions>
+        <action id="puddingagent.sendToChat"
+                class="com.puddingagent.ide.notifications.AtMentionAction"
+                text="Send to Pudding-Agent (@)"
+                description="Send selected code to Pudding-Agent">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

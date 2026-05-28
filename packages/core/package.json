@@ -1,0 +1,37 @@
+{
+  "name": "@puddingagent/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@mozilla/readability": "^0.6.0",
+    "fast-glob": "^3.3.3",
+    "gray-matter": "^4.0.3",
+    "linkedom": "^0.18.12",
+    "openai": "^6.37.0",
+    "picomatch": "^4.0.4",
+    "sql.js": "^1.14.1",
+    "turndown": "^7.2.4",
+    "uuid": "^11.0.0",
+    "ws": "^8.20.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "@types/picomatch": "^4.0.3",
+    "@types/sql.js": "^1.4.11",
+    "@types/turndown": "^5.0.6",
+    "@types/uuid": "*",
+    "@types/ws": "^8.18.1",
+    "vitest": "*"
+  }
+}

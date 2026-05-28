@@ -1,0 +1,42 @@
+{
+  "name": "pudding-agent",
+  "displayName": "Pudding-Agent",
+  "description": "Bidirectional communication between Pudding-Agent and VS Code",
+  "version": "0.2.0",
+  "publisher": "puddingagent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/u53/PUDDINGAGENT"
+  },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "puddingagent.sendToChat", "title": "Send to Pudding-Agent (@)" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "puddingagent.sendToChat", "group": "puddingagent@1" }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "npx @vscode/vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "uuid": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "@types/uuid": "^11.0.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,59 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+out/
+**/out/
+.vite/
+**/.vite/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+packages/electron/ui/
+tmp/
+output/
+coverage/
+packages/electron/resources/codegraph/
+
+# Build outputs
+.gradle/
+build/
+**/build/
+*.vsix
+
+# Local state (per-machine, regenerated)
+.puddingagent/
+.claude/
+.codex/
+.cursor/
+.continue/
+.team/
+.team-archive/
+sessions/
+conversations/
+history/
+chats/
+transcripts/
+docs/superpowers/
+model-config*
+models.local.*
+mcp-servers.json
+
+# IDE/editor local state
+.idea/
+.vscode/
+
+# Lockfiles for sub-packages we don't ship as standalone npm pkgs
+packages/vscode-extension/package-lock.json
+
+# Local diagnostic scripts (per-machine, not part of the product)
+puddingagent-diagnose.ps1
+.codegraph/
+CLAUDE.md

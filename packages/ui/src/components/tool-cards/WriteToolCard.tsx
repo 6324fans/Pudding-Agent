@@ -1,0 +1,60 @@
+import { useState } from 'react'
+import type { ToolCardRouterProps } from './ToolCardRouter'
+import { ToolCardShell } from './ToolCardShell'
+
+export function WriteToolCard({ event, input, result }: ToolCardRouterProps) {
+  const status = event
+    ? (event.type === 'complete' ? 'done' : event.type === 'error' ? 'error' : 'running')
+    : (result?.is_error ? 'error' : 'done')
+
+  const toolInput = event?.input || input || {}
+  const filePath = (toolInput.file_path || '') as string
+  const content = (toolInput.content || '') as string
+  const lines = content.split('\n')
+  const isError = event?.result?.isError || result?.is_error
+  const errorContent = event?.result?.content || result?.content || ''
+
+  const [showAll, setShowAll] = useState(false)
+  const displayLines = showAll ? lines : lines.slice(0, 5)
+  const hasMore = lines.length > 10
+
+  return (
+    <ToolCardShell
+      label="WRITE"
+      detail={`${filePath} (${lines.length} 行)`}
+      status={status}
+      defaultExpanded={status === 'running'}
+    >
+      {isError && (
+        <pre className="max-h-48 overflow-auto p-2 text-[12px] whitespace-pre-wrap text-[var(--bad)]" style={{ fontFamily: 'var(--font-mono)' }}>
+          {errorContent}
+        </pre>
+      )}
+      {!isError && lines.length > 0 && (
+        <div className="max-h-[400px] overflow-auto text-[12px]" style={{ fontFamily: 'var(--font-mono)' }}>
+          <table className="w-full border-collapse">
+            <tbody>
+              {displayLines.map((line, i) => (
+                <tr key={i}>
+                  <td className="select-none text-right pr-1 w-[30px] align-top" style={{ color: 'var(--muted)', opacity: 0.5 }}>
+                    {i + 1}
+                  </td>
+                  <td className="select-none w-[14px] text-center" style={{ color: 'var(--good)' }}>+</td>
+                  <td className="whitespace-pre-wrap break-all pl-1" style={{ color: 'var(--good)' }}>{line}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {hasMore && !showAll && (
+            <div
+              className="text-[var(--muted)] cursor-pointer hover:text-[var(--text)] mt-1 pl-[74px]"
+              onClick={(e) => { e.stopPropagation(); setShowAll(true) }}
+            >
+              ... 还有 {lines.length - 5} 行
+            </div>
+          )}
+        </div>
+      )}
+    </ToolCardShell>
+  )
+}

@@ -1,0 +1,77 @@
+import { BrowserWindow, nativeImage } from 'electron'
+import path from 'node:path'
+import { existsSync } from 'node:fs'
+
+let mainWindow: BrowserWindow | null = null
+
+export function createMainWindow(): BrowserWindow {
+  const preloadPath = path.join(__dirname, 'preload.js')
+
+  const iconPath = path.join(__dirname, '../../assets/icon.png')
+
+  mainWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    icon: existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : undefined,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 12, y: 12 },
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  })
+
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173')
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../ui/index.html'))
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      const levels = ['log', 'warn', 'error', 'debug'] as const
+      console.log(`[renderer:${levels[level] ?? level}] ${message} (${sourceId}:${line})`)
+    })
+
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      console.error(`[Pudding-Agent] failed to load ${validatedURL}: ${errorCode} ${errorDescription}`)
+    })
+
+    mainWindow.webContents.on('did-finish-load', () => {
+      mainWindow?.webContents.executeJavaScript('typeof window.electronAPI').then((result) => {
+        if (result !== 'object') {
+          console.warn('[Pudding-Agent] electronAPI preload unavailable:', result)
+        }
+      })
+      mainWindow?.webContents.executeJavaScript('document.body.innerText.slice(0, 200)').then((text) => {
+        console.log(`[renderer:body] ${JSON.stringify(text)}`)
+      })
+    })
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    mainWindow.webContents.on('before-input-event', (_event, input) => {
+      if (
+        input.type === 'keyDown' &&
+        ((input.meta && input.shift && input.key === 'i') ||
+          (input.control && input.shift && input.key === 'I'))
+      ) {
+        mainWindow?.webContents.toggleDevTools()
+      }
+    })
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
+  return mainWindow
+}
+
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow
+}

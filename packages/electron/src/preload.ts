@@ -1,0 +1,193 @@
+import { contextBridge, ipcRenderer, clipboard } from 'electron'
+
+const api = {
+  send: (channel: string, data: unknown) => {
+    ipcRenderer.send(channel, data)
+  },
+  invoke: (channel: string, data?: unknown) => {
+    return ipcRenderer.invoke(channel, data)
+  },
+  on: (channel: string, callback: (event: unknown, ...args: unknown[]) => void) => {
+    const listener = (_event: unknown, ...args: unknown[]) => callback(_event, ...args)
+    ipcRenderer.on(channel, listener)
+    return () => { ipcRenderer.removeListener(channel, listener) }
+  },
+  mcpListServers: () => ipcRenderer.invoke('mcp:list-servers'),
+  mcpReconnect: (serverName: string) => ipcRenderer.invoke('mcp:reconnect', { serverName }),
+  mcpToggle: (serverName: string, enabled: boolean) => ipcRenderer.invoke('mcp:toggle', { serverName, enabled }),
+  mcpSaveConfig: (servers: any, scope: string, cwd?: string) => ipcRenderer.invoke('mcp:save-config', { servers, scope, cwd }),
+  onMcpStateChanged: (callback: (states: any[]) => void) => {
+    const listener = (_event: unknown, states: any[]) => callback(states)
+    ipcRenderer.on('mcp:state-changed', listener)
+    return () => { ipcRenderer.removeListener('mcp:state-changed', listener) }
+  },
+  pluginsListMarketplaces: () => ipcRenderer.invoke('plugins:list-marketplaces'),
+  pluginsAddMarketplace: (source: string) => ipcRenderer.invoke('plugins:add-marketplace', { source }),
+  pluginsRemoveMarketplace: (id: string) => ipcRenderer.invoke('plugins:remove-marketplace', { id }),
+  pluginsList: () => ipcRenderer.invoke('plugins:list'),
+  pluginsInstall: (plugin: any) => ipcRenderer.invoke('plugins:install', { plugin }),
+  pluginsUninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', { id }),
+  pluginsSetEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:set-enabled', { id, enabled }),
+  listSkills: (sessionId: string) => ipcRenderer.invoke('skills:list', { sessionId }),
+  setPermissionMode: (sessionId: string, mode: string) => ipcRenderer.invoke('session:set-permission-mode', { sessionId, mode }),
+  compactSession: (sessionId: string) => ipcRenderer.invoke('session:compact', { sessionId }),
+  clearSession: (sessionId: string) => ipcRenderer.invoke('session:clear', { sessionId }),
+  setEffort: (sessionId: string, effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max') => ipcRenderer.invoke('session:set-effort', { sessionId, effort }),
+  agentAbort: (sessionId: string, agentToolUseId: string) =>
+    ipcRenderer.invoke('agent:abort', { sessionId, agentToolUseId }),
+  agentBackground: (sessionId: string, agentToolUseId: string) =>
+    ipcRenderer.invoke('agent:background', { sessionId, agentToolUseId }),
+  planRespond: (id: string, approved: boolean, feedback?: string) =>
+    ipcRenderer.send('plan:respond', { id, approved, feedback }),
+  setPlanMode: (sessionId: string, mode: string) =>
+    ipcRenderer.invoke('session:set-plan-mode', { sessionId, mode }),
+  getPlanMode: (sessionId: string) =>
+    ipcRenderer.invoke('session:get-plan-mode', { sessionId }),
+  writeClipboard: (text: string) => clipboard.writeText(text),
+
+  // Git
+  gitBranchList: (cwd: string) => ipcRenderer.invoke('git:branch-list', { cwd }),
+  gitBranchSwitch: (cwd: string, branch: string) => ipcRenderer.invoke('git:branch-switch', { cwd, branch }),
+  gitBranchCreate: (cwd: string, branch: string, from?: string) => ipcRenderer.invoke('git:branch-create', { cwd, branch, from }),
+  gitBranchDelete: (cwd: string, branch: string) => ipcRenderer.invoke('git:branch-delete', { cwd, branch }),
+  gitStatus: (cwd: string) => ipcRenderer.invoke('git:status', { cwd }),
+  gitStash: (cwd: string) => ipcRenderer.invoke('git:stash', { cwd }),
+  gitStashPop: (cwd: string) => ipcRenderer.invoke('git:stash-pop', { cwd }),
+  gitHasStash: (cwd: string) => ipcRenderer.invoke('git:has-stash', { cwd }),
+  gitWatchStart: (cwd: string) => ipcRenderer.invoke('git:watch-start', { cwd }),
+  gitWatchStop: (cwd: string) => ipcRenderer.invoke('git:watch-stop', { cwd }),
+  onGitBranchChanged: (callback: (data: { cwd: string; branches: string[]; current: string }) => void) => {
+    const listener = (_event: unknown, payload: { cwd: string; branches: string[]; current: string }) => callback(payload)
+    ipcRenderer.on('git:branch-changed', listener)
+    return () => { ipcRenderer.removeListener('git:branch-changed', listener) }
+  },
+
+  // Apps
+  appsDetect: () => ipcRenderer.invoke('apps:detect'),
+  appsOpen: (appId: string, cwd: string) => ipcRenderer.invoke('apps:open', { appId, cwd }),
+
+  // IDE Integration
+  ideGetState: () => ipcRenderer.invoke('ide:get-state'),
+  ideOpenFile: (filePath: string, line?: number, column?: number) =>
+    ipcRenderer.invoke('ide:open-file', { filePath, line, column }),
+  ideOpenDiff: (params: any) => ipcRenderer.invoke('ide:open-diff', params),
+  ideCloseDiffTabs: () => ipcRenderer.invoke('ide:close-diff-tabs'),
+  ideGetDiagnostics: (filePaths: string[]) =>
+    ipcRenderer.invoke('ide:get-diagnostics', { filePaths }),
+  onIdeStateChanged: (callback: (connections: any[]) => void) => {
+    const listener = (_event: unknown, connections: any[]) => callback(connections)
+    ipcRenderer.on('ide:state-changed', listener)
+    return () => { ipcRenderer.removeListener('ide:state-changed', listener) }
+  },
+  onIdeSelectionChanged: (callback: (data: any) => void) => {
+    const listener = (_event: unknown, data: any) => callback(data)
+    ipcRenderer.on('ide:selection-changed', listener)
+    return () => { ipcRenderer.removeListener('ide:selection-changed', listener) }
+  },
+  onIdeAtMentioned: (callback: (data: any) => void) => {
+    const listener = (_event: unknown, data: any) => callback(data)
+    ipcRenderer.on('ide:at-mentioned', listener)
+    return () => { ipcRenderer.removeListener('ide:at-mentioned', listener) }
+  },
+
+  // Terminal
+  terminalCreate: (cwd: string) => ipcRenderer.invoke('terminal:create', { cwd }),
+  terminalWrite: (id: string, data: string) => ipcRenderer.send('terminal:write', { id, data }),
+  terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
+  terminalDestroy: (id: string) => ipcRenderer.invoke('terminal:destroy', { id }),
+  onTerminalData: (callback: (data: { id: string; data: string }) => void) => {
+    const listener = (_event: unknown, payload: { id: string; data: string }) => callback(payload)
+    ipcRenderer.on('terminal:data', listener)
+    return () => ipcRenderer.removeListener('terminal:data', listener)
+  },
+  onTerminalExit: (callback: (data: { id: string; code: number }) => void) => {
+    const listener = (_event: unknown, payload: { id: string; code: number }) => callback(payload)
+    ipcRenderer.on('terminal:exit', listener)
+    return () => ipcRenderer.removeListener('terminal:exit', listener)
+  },
+
+  // Background Tasks
+  backgroundList: (sessionId: string) => ipcRenderer.invoke('background:list', { sessionId }),
+  backgroundStop: (sessionId: string, taskId: string) => ipcRenderer.invoke('background:stop', { sessionId, taskId }),
+  backgroundOutput: (sessionId: string, taskId: string, tail?: number) => ipcRenderer.invoke('background:output', { sessionId, taskId, tail }),
+  onBackgroundStateChanged: (callback: (data: { sessionId: string }) => void) => {
+    const listener = (_event: unknown, data: any) => callback(data)
+    ipcRenderer.on('background:state-changed', listener)
+    return () => { ipcRenderer.removeListener('background:state-changed', listener) }
+  },
+  onBackgroundNotification: (callback: (data: { sessionId: string }) => void) => {
+    const listener = (_event: unknown, data: any) => callback(data)
+    ipcRenderer.on('background:notification', listener)
+    return () => { ipcRenderer.removeListener('background:notification', listener) }
+  },
+
+  // Team Mode
+  teamGetStatus: (sessionId: string, taskId: string) =>
+    ipcRenderer.invoke('team:get-status', { sessionId, taskId }),
+  teamGetEvents: (sessionId: string, taskId: string, tail?: number) =>
+    ipcRenderer.invoke('team:get-events', { sessionId, taskId, tail }),
+  teamSend: (sessionId: string, taskId: string, payload: { message: string; target?: string; intent?: string; priority?: string }) =>
+    ipcRenderer.invoke('team:send', { sessionId, taskId, payload }),
+  onTeamStateChanged: (callback: (data: { sessionId: string; taskId: string }) => void) => {
+    const listener = (_event: unknown, data: any) => callback(data)
+    ipcRenderer.on('team:state-changed', listener)
+    return () => { ipcRenderer.removeListener('team:state-changed', listener) }
+  },
+
+  // Updater
+  updaterCheck: () => ipcRenderer.invoke('updater:check'),
+  updaterDownload: () => ipcRenderer.invoke('updater:download'),
+  updaterInstall: () => ipcRenderer.invoke('updater:install'),
+
+  // Model
+  modelTest: (params: { protocol: string; baseUrl: string; apiKey: string; modelId: string }) =>
+    ipcRenderer.invoke('model:test', params),
+
+  onUpdaterAvailable: (callback: (data: { version: string }) => void) => {
+    const listener = (_event: unknown, payload: { version: string }) => callback(payload)
+    ipcRenderer.on('updater:available', listener)
+    return () => ipcRenderer.removeListener('updater:available', listener)
+  },
+  onUpdaterProgress: (callback: (data: { percent: number }) => void) => {
+    const listener = (_event: unknown, payload: { percent: number }) => callback(payload)
+    ipcRenderer.on('updater:progress', listener)
+    return () => ipcRenderer.removeListener('updater:progress', listener)
+  },
+  onUpdaterDownloaded: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('updater:downloaded', listener)
+    return () => ipcRenderer.removeListener('updater:downloaded', listener)
+  },
+  onUpdaterNotAvailable: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('updater:not-available', listener)
+    return () => ipcRenderer.removeListener('updater:not-available', listener)
+  },
+  onUpdaterError: (callback: (data: { message: string }) => void) => {
+    const listener = (_event: unknown, payload: { message: string }) => callback(payload)
+    ipcRenderer.on('updater:error', listener)
+    return () => ipcRenderer.removeListener('updater:error', listener)
+  },
+
+  getVersion: () => ipcRenderer.invoke('app:version'),
+
+  // CodeGraph
+  codegraphApi: {
+    init: (cwd: string) => ipcRenderer.invoke('codegraph:init', cwd),
+    reindex: (cwd: string) => ipcRenderer.invoke('codegraph:reindex', cwd),
+    dismiss: (cwd: string) => ipcRenderer.invoke('codegraph:dismiss', cwd),
+    refreshState: (cwd: string) => ipcRenderer.invoke('codegraph:state', cwd),
+    onState: (cb: (s: { cwd: string; initialized: boolean; dismissed: boolean }) => void) => {
+      const handler = (_e: any, s: any) => cb(s)
+      ipcRenderer.on('codegraph:project-state', handler)
+      return () => ipcRenderer.removeListener('codegraph:project-state', handler)
+    },
+    onInitProgress: (cb: (e: { cwd: string; line: string }) => void) => {
+      const handler = (_e: any, p: any) => cb(p)
+      ipcRenderer.on('codegraph:init-progress', handler)
+      return () => ipcRenderer.removeListener('codegraph:init-progress', handler)
+    },
+  },
+}
+
+contextBridge.exposeInMainWorld('electronAPI', api)
