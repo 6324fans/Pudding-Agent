@@ -5,13 +5,31 @@ on:
     tags:
       - 'v[0-9]*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, for example v1.0.0'
+        required: true
+        type: string
+      package:
+        description: 'Package set to build'
+        required: true
+        default: mac-arm64
+        type: choice
+        options:
+          - mac-arm64
+          - all
 
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
-  release-mac:
-    runs-on: macos-latest
+  release-mac-arm64:
+    name: Release macOS arm64
+    if: ${{ github.event_name == 'push' || github.event.inputs.package == 'mac-arm64' || github.event.inputs.package == 'all' }}
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -30,17 +48,24 @@ jobs:
 
       - run: pip install setuptools
 
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
 
       - name: Fetch CodeGraph binaries
-        run: pnpm fetch-codegraph
+        run: pnpm fetch-codegraph -- --platforms=darwin-arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Import signing certificate
+      - name: Configure macOS signing
+        shell: bash
         run: |
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "No macOS signing certificate configured; building unsigned arm64 package."
+            exit 0
+          fi
+
           echo "$CSC_LINK" | base64 --decode > cert.p12
           security create-keychain -p "actions" build.keychain
           security default-keychain -s build.keychain
@@ -54,17 +79,22 @@ jobs:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
-      - name: Package
-        run: pnpm package
+      - name: Package macOS arm64
+        run: |
+          node scripts/fix-node-pty-permissions.mjs
+          pnpm exec electron-builder --mac --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        timeout-minutes: 5
+        timeout-minutes: 20
 
       - name: Upload Mac artifacts
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          fail_on_unmatched_files: true
           files: |
             out/*.dmg
             out/*.zip
@@ -72,6 +102,7 @@ jobs:
             out/latest-mac.yml
 
   release-windows:
+    if: ${{ github.event_name == 'push' || github.event.inputs.package == 'all' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,12 +139,15 @@ jobs:
       - name: Upload Windows artifacts
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: |
             out/*.exe
             out/*.blockmap
             out/latest.yml
 
   release-vscode:
+    if: ${{ github.event_name == 'push' || github.event.inputs.package == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,9 +168,12 @@ jobs:
       - name: Upload VS Code extension
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: packages/vscode-extension/*.vsix
 
   release-jetbrains:
+    if: ${{ github.event_name == 'push' || github.event.inputs.package == 'all' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -152,4 +189,6 @@ jobs:
       - name: Upload JetBrains plugin
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
           files: packages/jetbrains-plugin/build/distributions/*.zip
