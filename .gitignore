@@ -58,3 +58,5 @@ puddingagent-diagnose.ps1
 .codegraph/
 CLAUDE.md
 .gitnexus
+AGENTS.md
+docs/
