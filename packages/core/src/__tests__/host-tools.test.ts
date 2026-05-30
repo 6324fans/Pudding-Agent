@@ -1,0 +1,45 @@
+import { describe, expect, it } from 'vitest'
+import { createBrowserOpenTool } from '../tools/browser-open.js'
+import { createSkillListTool } from '../tools/skill-list.js'
+
+describe('host capability tools', () => {
+  it('browser_open validates URL protocols', async () => {
+    const opened: string[] = []
+    const tool = createBrowserOpenTool((url) => { opened.push(url) })
+
+    const invalid = await tool.execute({ url: 'file:///etc/passwd' }, { cwd: '/' })
+    expect(invalid.isError).toBe(true)
+    expect(opened).toHaveLength(0)
+
+    const valid = await tool.execute({ url: 'https://example.com/path' }, { cwd: '/' })
+    expect(valid.isError).toBeUndefined()
+    expect(opened).toEqual(['https://example.com/path'])
+  })
+
+  it('skill_list reports empty skill state clearly', async () => {
+    const loader = { getAll: () => [] } as any
+    const tool = createSkillListTool(loader)
+
+    const result = await tool.execute({}, { cwd: '/' })
+
+    expect(result.isError).toBeUndefined()
+    expect(result.content).toContain('No skills are currently loaded')
+  })
+
+  it('skill_list renders available skills', async () => {
+    const loader = {
+      getAll: () => [{
+        name: 'weather-helper',
+        description: 'Answer weather questions',
+        source: 'global',
+        filePath: '/tmp/weather-helper/SKILL.md',
+      }],
+    } as any
+    const tool = createSkillListTool(loader)
+
+    const result = await tool.execute({}, { cwd: '/' })
+
+    expect(result.content).toContain('weather-helper')
+    expect(result.content).toContain('/tmp/weather-helper/SKILL.md')
+  })
+})

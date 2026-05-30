@@ -15,9 +15,9 @@ export interface ToolBatchResult {
 
 const READ_TOOLS = new Set([
   'file_read', 'glob', 'grep', 'ls', 'tree',
-  'web_fetch', 'web_search', 'lsp',
+  'web_fetch', 'web_search', 'weather', 'lsp',
   'task_get', 'task_list', 'task_stop',
-  'list_mcp_resources', 'read_mcp_resource', 'skill',
+  'list_mcp_resources', 'read_mcp_resource', 'skill', 'skill_list', 'Skill',
 ])
 
 const LONG_RUNNING_TOOLS = new Set(['Agent', 'bash', 'monitor'])

@@ -1,6 +1,6 @@
 {
   "name": "puddingagent",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Pudding-Agent - AI-powered coding assistant desktop app",
   "author": "Pudding-Agent Team",
   "private": true,
@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.3",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",

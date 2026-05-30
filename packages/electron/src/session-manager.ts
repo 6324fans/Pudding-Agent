@@ -4,12 +4,13 @@ import {
   Session, type SessionEvents, AnthropicProvider, OpenAIChatProvider, OpenAIResponsesProvider,
   ConversationHistory, loadAppConfig, saveAppConfig, getConfigDir, type ModelConfig, type SessionConfig, type StreamChunk,
   type PermissionCallback, createAskUserTool, type AskUserCallback, createNotifyTool, type NotifyCallback,
+  createBrowserOpenTool,
   McpManager, loadMcpConfig, saveMcpConfig, type McpServerConfig, type McpServerState,
   IdeManager, type IdeConnection, type OpenDiffParams, type OpenDiffResult, type DiagnosticFile,
-  codegraph,
+  codegraph, compressImageForAPI,
 } from '@puddingagent/core'
 import type { ToolExecutionEvent } from '@puddingagent/core'
-import { Notification, type BrowserWindow } from 'electron'
+import { Notification, shell, type BrowserWindow } from 'electron'
 
 function getActiveModelConfig() {
   const config = loadAppConfig()
@@ -265,6 +266,9 @@ export class SessionManager {
       notification.show()
     }
     session.registerTool(createNotifyTool(onNotify))
+    session.registerTool(createBrowserOpenTool(async (url) => {
+      await shell.openExternal(url)
+    }))
     session.loadHistory()
     ;(session as any)._protocol = protocol
     session.onNotificationReady = () => {
@@ -381,15 +385,38 @@ export class SessionManager {
       },
     }
 
-    // Convert images to ImageContent blocks
-    const extraContent = images?.map(img => ({
-      type: 'image' as const,
-      source: {
-        type: 'base64' as const,
-        media_type: img.mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
-        data: img.data,
-      },
-    }))
+    // Compress images in the main process so the renderer can keep a simple attachment UI.
+    let extraContent: Array<{ type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } }> | undefined
+    if (images?.length) {
+      extraContent = await Promise.all(images.map(async (img) => {
+        try {
+          const compressed = await compressImageForAPI(img.data, img.mediaType)
+          return {
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: compressed.mediaType,
+              data: compressed.data,
+            },
+          }
+        } catch (err) {
+          const rawSize = Buffer.from(img.data, 'base64').length
+          const base64Size = Math.ceil((rawSize * 4) / 3)
+          if (base64Size > 5 * 1024 * 1024) {
+            throw new Error(`Image too large (${(base64Size / 1024 / 1024).toFixed(1)}MB) and compression failed`)
+          }
+          console.warn('[IMAGE] Compression failed, sending original:', (err as Error).message)
+          return {
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: img.mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+              data: img.data,
+            },
+          }
+        }
+      }))
+    }
 
     try {
       await session.sendMessage(text, events, extraContent)

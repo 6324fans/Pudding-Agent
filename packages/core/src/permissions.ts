@@ -12,12 +12,12 @@ export { type PermissionRule } from './permission-rules.js'
 const READ_ONLY_TOOLS = new Set([
   'file_read', 'glob', 'grep', 'ls', 'tree',
   'task_create', 'task_get', 'task_list', 'task_update', 'task_stop',
-  'todo_write', 'lsp', 'web_search', 'ask_user',
-  'list_mcp_resources', 'read_mcp_resource', 'skill',
+  'todo_write', 'lsp', 'web_fetch', 'web_search', 'weather', 'browser_open', 'ask_user',
+  'list_mcp_resources', 'read_mcp_resource', 'skill', 'skill_list', 'Skill',
 ])
 
 const WRITE_TOOLS = new Set([
-  'bash', 'file_write', 'file_edit', 'notebook_edit', 'web_fetch', 'agent',
+  'bash', 'file_write', 'file_edit', 'notebook_edit', 'agent',
 ])
 
 const CRITICAL_PATTERNS = [

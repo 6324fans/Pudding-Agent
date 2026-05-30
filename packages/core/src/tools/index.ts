@@ -11,6 +11,7 @@ import { treeTool } from './tree.js'
 import { notebookEditTool } from './notebook-edit.js'
 import { webFetchTool } from './web-fetch.js'
 import { webSearchTool } from './web-search.js'
+import { weatherTool } from './weather.js'
 import { lspTool } from './lsp.js'
 import { createPowerShellTool } from './powershell.js'
 import { findGitBash, findPowerShell } from '../utils/shell-detection.js'
@@ -44,7 +45,8 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
   registry.register(notebookEditTool)
   registry.register(webFetchTool)
   registry.register(webSearchTool)
+  registry.register(weatherTool)
   registry.register(lspTool)
 }
 
-export { bashTool, fileReadTool, fileWriteTool, fileEditTool, multiEditTool, globTool, grepTool, lsTool, treeTool, notebookEditTool, webFetchTool, webSearchTool, lspTool }
+export { bashTool, fileReadTool, fileWriteTool, fileEditTool, multiEditTool, globTool, grepTool, lsTool, treeTool, notebookEditTool, webFetchTool, webSearchTool, weatherTool, lspTool }

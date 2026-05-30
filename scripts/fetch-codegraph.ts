@@ -17,6 +17,16 @@ const ROOT = path.resolve(__dirname, '..')
 const RES_DIR = path.join(ROOT, 'packages', 'electron', 'resources', 'codegraph')
 const TMP_DIR = path.join(ROOT, 'tmp', 'codegraph-fetch')
 const GITHUB_PROXY_PREFIX = 'https://gh-proxy.com/'
+const DEFAULT_CODEGRAPH_VERSION = 'v0.9.6'
+const DEFAULT_CODEGRAPH_BASE_URL = `https://github.com/colbymchenry/codegraph/releases/download/${DEFAULT_CODEGRAPH_VERSION}`
+const DEFAULT_CODEGRAPH_SHA256: Record<string, string> = {
+  'codegraph-darwin-arm64.tar.gz': '4d09752ed6726681711dd8d0cd44acd0754a00e6639e2a5560b1a4449831a37a',
+  'codegraph-darwin-x64.tar.gz': '9a23cfba88e20c9e815f294446013952a6763aa60beb376348cfd7664a99d5a7',
+  'codegraph-linux-arm64.tar.gz': 'da9f27a26f3a0bb7dbbe3c2fd600c9bce898d032a0d25d6c4bb419f06127e896',
+  'codegraph-linux-x64.tar.gz': '7c2f1d1c28c630747794cc3354c4d00828399a20266d492ec33d80f9b700a02e',
+  'codegraph-win32-arm64.zip': 'ca708adde9ceaecd8b2aa82f8ec684f8b8a4288fcf2bdaa0ba4e6afbc6d1df20',
+  'codegraph-win32-x64.zip': 'a59b1959abd8ae3d8b236d86edb45a6dafdaecc8cd7e5b0ce697a52d28320dd8',
+}
 
 function buildFetchOptions(): RequestInit {
   const headers: Record<string, string> = { 'user-agent': 'puddingagent-fetch-codegraph' }
@@ -36,7 +46,7 @@ function buildFetchOptions(): RequestInit {
 function parseArgs(): { platforms: Platform[]; version: string } {
   const argv = process.argv.slice(2)
   let platforms: Platform[] = []
-  let version = 'latest'
+  let version = DEFAULT_CODEGRAPH_VERSION
   for (const a of argv) {
     if (a.startsWith('--platforms=')) {
       platforms = a.slice('--platforms='.length).split(',').map(s => s.trim()) as Platform[]
@@ -139,33 +149,46 @@ async function main() {
   const { platforms, version } = parseArgs()
   console.log(`[fetch-codegraph] platforms=${platforms.join(',')} version=${version}`)
 
-  const release = version === 'latest'
-    ? await fetchJson('https://api.github.com/repos/colbymchenry/codegraph/releases/latest')
-    : await fetchJson(`https://api.github.com/repos/colbymchenry/codegraph/releases/tags/${version}`)
+  let tag = version
+  let assets: ReleaseAsset[] = []
+  let sums = new Map<string, string>()
+  const usePinnedDirectDownload = version === DEFAULT_CODEGRAPH_VERSION
 
-  const tag: string = release.tag_name
-  const assets: ReleaseAsset[] = release.assets || []
-  console.log(`[fetch-codegraph] release tag=${tag}`)
+  if (!usePinnedDirectDownload) {
+    const release = version === 'latest'
+      ? await fetchJson('https://api.github.com/repos/colbymchenry/codegraph/releases/latest')
+      : await fetchJson(`https://api.github.com/repos/colbymchenry/codegraph/releases/tags/${version}`)
+
+    tag = release.tag_name
+    assets = release.assets || []
+    console.log(`[fetch-codegraph] release tag=${tag}`)
+  } else {
+    console.log(`[fetch-codegraph] using pinned direct download ${DEFAULT_CODEGRAPH_VERSION}`)
+  }
 
   rmSync(TMP_DIR, { recursive: true, force: true })
   mkdirSync(TMP_DIR, { recursive: true })
 
-  const sumsAsset = assets.find(a => a.name === 'SHA256SUMS')
-  if (!sumsAsset) throw new Error('SHA256SUMS missing in release')
-  const sumsPath = path.join(TMP_DIR, 'SHA256SUMS')
-  await downloadFile(sumsAsset.browser_download_url, sumsPath)
-  const sums = parseSumsFile(readFileSync(sumsPath, 'utf-8'))
+  if (!usePinnedDirectDownload) {
+    const sumsAsset = assets.find(a => a.name === 'SHA256SUMS')
+    if (!sumsAsset) throw new Error('SHA256SUMS missing in release')
+    const sumsPath = path.join(TMP_DIR, 'SHA256SUMS')
+    await downloadFile(sumsAsset.browser_download_url, sumsPath)
+    sums = parseSumsFile(readFileSync(sumsPath, 'utf-8'))
+  }
 
   for (const p of platforms) {
     const assetName = platformAssetName(p)
-    const asset = assets.find(a => a.name === assetName)
-    if (!asset) throw new Error(`asset ${assetName} missing in release ${tag}`)
+    const downloadUrl = usePinnedDirectDownload
+      ? `${DEFAULT_CODEGRAPH_BASE_URL}/${assetName}`
+      : assets.find(a => a.name === assetName)?.browser_download_url
+    if (!downloadUrl) throw new Error(`asset ${assetName} missing in release ${tag}`)
 
     const archivePath = path.join(TMP_DIR, assetName)
     console.log(`[fetch-codegraph] downloading ${assetName}...`)
-    await downloadFile(asset.browser_download_url, archivePath)
+    await downloadFile(downloadUrl, archivePath)
 
-    const want = sums.get(assetName)
+    const want = usePinnedDirectDownload ? DEFAULT_CODEGRAPH_SHA256[assetName] : sums.get(assetName)
     const got = sha256(archivePath)
     if (!want) throw new Error(`no sha for ${assetName}`)
     if (want !== got) throw new Error(`sha mismatch ${assetName}: want ${want}, got ${got}`)

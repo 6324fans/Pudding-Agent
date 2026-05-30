@@ -28,6 +28,7 @@ import { createReadMcpResourceTool } from './tools/read-mcp-resource.js'
 import { loadHookConfig, HookEngine } from './hooks/index.js'
 import { SkillLoader } from './skills/loader.js'
 import { createSkillTool } from './tools/skill.js'
+import { createSkillListTool } from './tools/skill-list.js'
 import { createEnterPlanModeTool, isPlanModeToolAllowed } from './tools/enter-plan-mode.js'
 import { createExitPlanModeTool } from './tools/exit-plan-mode.js'
 import { createAgentTool } from './tools/agent.js'
@@ -343,10 +344,11 @@ export class Session {
   private async initSkills(): Promise<void> {
     try {
       await this.skillLoader.loadAll(this.config.cwd)
-      this.toolRegistry.register(createSkillTool(this.skillLoader))
     } catch {
       // Skills are optional — if loading fails, continue without them
     }
+    this.toolRegistry.register(createSkillTool(this.skillLoader))
+    this.toolRegistry.register(createSkillListTool(this.skillLoader))
   }
 
   async ensureSkillsReady(): Promise<void> {
@@ -355,6 +357,22 @@ export class Session {
 
   async reloadSkills(): Promise<void> {
     await this.skillLoader.loadAll(this.config.cwd)
+  }
+
+  private syncMcpTools(): void {
+    if (!this.mcpManager) return
+    for (const tool of this.mcpManager.getTools()) {
+      if (this.toolRegistry.get(tool.name)) continue
+      const parts = tool.name.split('__')
+      const serverName = parts[1]
+      const toolName = parts.slice(2).join('__')
+      if (!serverName || !toolName) continue
+      this.toolRegistry.register(createMcpToolHandler(
+        serverName,
+        { name: toolName, description: tool.description, inputSchema: tool.inputSchema },
+        this.mcpManager,
+      ))
+    }
   }
 
   getSkillLoader(): SkillLoader {
@@ -456,6 +474,7 @@ export class Session {
   async sendMessage(text: string, events: SessionEvents, extraContent?: import('./types.js').ContentBlock[]): Promise<void> {
     await this.ensureHooksReady()
     await this.ensureSkillsReady()
+    this.syncMcpTools()
 
     // Assemble system prompt with current tool list
     const toolDefs = this.toolRegistry.getDefinitions()

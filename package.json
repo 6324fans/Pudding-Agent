@@ -1,6 +1,6 @@
 {
   "name": "pudding-agent",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "packageManager": "pnpm@10.34.1",
   "scripts": {
@@ -29,7 +29,8 @@
       "electron",
       "esbuild",
       "keytar",
-      "node-pty"
+      "node-pty",
+      "sharp"
     ],
     "ignoredBuiltDependencies": [
       "@vscode/vsce-sign",
