@@ -57,3 +57,4 @@ packages/vscode-extension/package-lock.json
 puddingagent-diagnose.ps1
 .codegraph/
 CLAUDE.md
+.gitnexus
