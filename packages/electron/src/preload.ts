@@ -29,6 +29,11 @@ const api = {
   pluginsUninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', { id }),
   pluginsSetEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:set-enabled', { id, enabled }),
   listSkills: (sessionId: string) => ipcRenderer.invoke('skills:list', { sessionId }),
+  onSessionChanged: (callback: (data: any) => void) => {
+    const listener = (_event: unknown, data: any) => callback(data)
+    ipcRenderer.on('session:changed', listener)
+    return () => { ipcRenderer.removeListener('session:changed', listener) }
+  },
   setPermissionMode: (sessionId: string, mode: string) => ipcRenderer.invoke('session:set-permission-mode', { sessionId, mode }),
   compactSession: (sessionId: string) => ipcRenderer.invoke('session:compact', { sessionId }),
   clearSession: (sessionId: string) => ipcRenderer.invoke('session:clear', { sessionId }),
@@ -142,6 +147,28 @@ const api = {
   // Model
   modelTest: (params: { protocol: string; baseUrl: string; apiKey: string; modelId: string }) =>
     ipcRenderer.invoke('model:test', params),
+
+  // Chat Bridge
+  chatBridgeGet: () => ipcRenderer.invoke('chat-bridge:get'),
+  chatBridgeChannels: () => ipcRenderer.invoke('chat-bridge:channels'),
+  chatBridgeStart: () => ipcRenderer.invoke('chat-bridge:start'),
+  chatBridgeStop: () => ipcRenderer.invoke('chat-bridge:stop'),
+  chatBridgeStartChannel: (channelId: string) => ipcRenderer.invoke('chat-bridge:start-channel', { channelId }),
+  chatBridgeStopChannel: (channelId: string) => ipcRenderer.invoke('chat-bridge:stop-channel', { channelId }),
+  chatBridgeSaveChannel: (channel: any) => ipcRenderer.invoke('chat-bridge:save-channel', { channel }),
+  chatBridgeLoginChannel: (channelId: string) => ipcRenderer.invoke('chat-bridge:login-channel', { channelId }),
+  chatBridgePollLogin: (channelId: string, qrcode: string) => ipcRenderer.invoke('chat-bridge:poll-login', { channelId, qrcode }),
+  chatBridgeResetRoute: (routeKey: string) => ipcRenderer.invoke('chat-bridge:reset-route', { routeKey }),
+  chatBridgeNewRouteSession: (routeKey: string) => ipcRenderer.invoke('chat-bridge:new-route-session', { routeKey }),
+  chatBridgeUntrustRoute: (routeKey: string) => ipcRenderer.invoke('chat-bridge:untrust-route', { routeKey }),
+  chatBridgeSaveSecurity: (security: any) => ipcRenderer.invoke('chat-bridge:save-security', { security }),
+  chatBridgeRegeneratePairingCode: () => ipcRenderer.invoke('chat-bridge:regenerate-pairing-code'),
+  chatBridgeSaveProject: (project: any) => ipcRenderer.invoke('chat-bridge:save-project', { project }),
+  onChatBridgeStateChanged: (callback: (snapshot: any) => void) => {
+    const listener = (_event: unknown, snapshot: any) => callback(snapshot)
+    ipcRenderer.on('chat-bridge:state-changed', listener)
+    return () => ipcRenderer.removeListener('chat-bridge:state-changed', listener)
+  },
 
   onUpdaterAvailable: (callback: (data: { version: string }) => void) => {
     const listener = (_event: unknown, payload: { version: string }) => callback(payload)

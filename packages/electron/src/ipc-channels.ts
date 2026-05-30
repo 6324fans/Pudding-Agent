@@ -4,6 +4,7 @@ export const IPC_CHANNELS = {
   SESSION_SEARCH: 'session:search',
   SESSION_SWITCH: 'session:switch',
   SESSION_DELETE: 'session:delete',
+  SESSION_CHANGED: 'session:changed',
   QUERY_SEND: 'query:send',
   QUERY_ABORT: 'query:abort',
   QUERY_STREAM: 'query:stream',
@@ -99,4 +100,21 @@ export const IPC_CHANNELS = {
 
   // Model
   MODEL_TEST: 'model:test',
+
+  // Chat Bridge
+  CHAT_BRIDGE_GET: 'chat-bridge:get',
+  CHAT_BRIDGE_CHANNELS: 'chat-bridge:channels',
+  CHAT_BRIDGE_START: 'chat-bridge:start',
+  CHAT_BRIDGE_STOP: 'chat-bridge:stop',
+  CHAT_BRIDGE_START_CHANNEL: 'chat-bridge:start-channel',
+  CHAT_BRIDGE_STOP_CHANNEL: 'chat-bridge:stop-channel',
+  CHAT_BRIDGE_SAVE_CHANNEL: 'chat-bridge:save-channel',
+  CHAT_BRIDGE_LOGIN_CHANNEL: 'chat-bridge:login-channel',
+  CHAT_BRIDGE_POLL_LOGIN: 'chat-bridge:poll-login',
+  CHAT_BRIDGE_RESET_ROUTE: 'chat-bridge:reset-route',
+  CHAT_BRIDGE_NEW_ROUTE_SESSION: 'chat-bridge:new-route-session',
+  CHAT_BRIDGE_UNTRUST_ROUTE: 'chat-bridge:untrust-route',
+  CHAT_BRIDGE_SAVE_SECURITY: 'chat-bridge:save-security',
+  CHAT_BRIDGE_REGENERATE_PAIRING_CODE: 'chat-bridge:regenerate-pairing-code',
+  CHAT_BRIDGE_SAVE_PROJECT: 'chat-bridge:save-project',
 } as const

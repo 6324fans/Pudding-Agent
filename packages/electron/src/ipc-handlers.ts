@@ -6,12 +6,14 @@ import { GitService } from './git-service.js'
 import { AppLauncher } from './app-launcher.js'
 import { TerminalService } from './terminal-service.js'
 import { PluginMarketplaceService } from './plugin-marketplace-service.js'
+import { ChatBridgeService } from './chat-bridge-service.js'
 
 interface DevToolServices {
   gitService: GitService
   appLauncher: AppLauncher
   terminalService: TerminalService
   pluginMarketplaceService: PluginMarketplaceService
+  chatBridgeService: ChatBridgeService
 }
 
 export function registerIpcHandlers(sessionManager: SessionManager, services: DevToolServices): void {
@@ -165,7 +167,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, services: De
     return sessionManager.getTasks(sessionId)
   })
 
-  const { gitService, appLauncher, terminalService, pluginMarketplaceService } = services
+  const { gitService, appLauncher, terminalService, pluginMarketplaceService, chatBridgeService } = services
 
   // Git
   ipcMain.handle(IPC_CHANNELS.GIT_BRANCH_LIST, async (_event, { cwd }) => {
@@ -358,6 +360,67 @@ export function registerIpcHandlers(sessionManager: SessionManager, services: De
     } catch (err: any) {
       return { success: false, error: err.message }
     }
+  })
+
+  // Chat Bridge
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_GET, async () => {
+    return chatBridgeService.snapshot()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_CHANNELS, async () => {
+    return chatBridgeService.getChannels()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_START, async () => {
+    return chatBridgeService.start()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_STOP, async () => {
+    return chatBridgeService.stop()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_START_CHANNEL, async (_event, { channelId }) => {
+    return chatBridgeService.startChannel(channelId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_STOP_CHANNEL, async (_event, { channelId }) => {
+    return chatBridgeService.stopChannel(channelId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_SAVE_CHANNEL, async (_event, { channel }) => {
+    return chatBridgeService.saveChannel(channel)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_LOGIN_CHANNEL, async (_event, { channelId }) => {
+    return chatBridgeService.loginChannel(channelId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_POLL_LOGIN, async (_event, { channelId, qrcode }) => {
+    return chatBridgeService.pollWeixinLogin(channelId, qrcode)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_RESET_ROUTE, async (_event, { routeKey }) => {
+    return chatBridgeService.resetRoute(routeKey)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_NEW_ROUTE_SESSION, async (_event, { routeKey }) => {
+    return chatBridgeService.newRouteSession(routeKey)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_UNTRUST_ROUTE, async (_event, { routeKey }) => {
+    return chatBridgeService.untrustRoute(routeKey)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_SAVE_SECURITY, async (_event, { security }) => {
+    return chatBridgeService.saveSecurity(security)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_REGENERATE_PAIRING_CODE, async () => {
+    return chatBridgeService.regeneratePairingCode()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRIDGE_SAVE_PROJECT, async (_event, { project }) => {
+    return chatBridgeService.saveProject(project)
   })
 
   // Background Tasks

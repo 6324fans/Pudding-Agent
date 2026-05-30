@@ -59,6 +59,100 @@ export interface InstalledPlugin {
   installedAt: number
 }
 
+export type ChatChannelKind = 'weixin' | 'feishu'
+export type ChatChannelState = 'stopped' | 'starting' | 'login_required' | 'connected' | 'degraded' | 'failed'
+
+export interface ChatChannelConfig {
+  id: string
+  kind: ChatChannelKind
+  label: string
+  enabled: boolean
+  accountId?: string
+  weixin?: {
+    baseUrl?: string
+    botType?: string
+    channelVersion?: string
+    token?: string
+    ilinkUserId?: string
+  }
+  feishu?: {
+    appId?: string
+    appSecret?: string
+    verificationToken?: string
+    encryptKey?: string
+    webhookPath?: string
+  }
+}
+
+export interface ChatChannelStatus {
+  channelId: string
+  kind: ChatChannelKind
+  label: string
+  state: ChatChannelState
+  enabled: boolean
+  account?: string
+  lastInboundAt?: string
+  lastOutboundAt?: string
+  lastError?: string
+  details?: Record<string, unknown>
+  capabilities: {
+    text: boolean
+    media: boolean
+    receiveMedia: boolean
+    typing: boolean
+    direct: boolean
+    group: boolean
+    thread: boolean
+    login: 'qr' | 'token' | 'none'
+    streamingHint: boolean
+  }
+}
+
+export interface ChatBridgeEvent {
+  id: string
+  channelId: string
+  kind: 'inbound' | 'outbound' | 'status' | 'error' | 'login'
+  text: string
+  routeKey?: string
+  timestamp: string
+}
+
+export interface ChatBridgeRouteState {
+  routeKey: string
+  channelId: string
+  sessionId?: string
+  conversationKind: 'direct' | 'group' | 'thread'
+  conversationName?: string
+  senderName?: string
+  inboundCount: number
+  outboundCount: number
+  pending: boolean
+  trusted: boolean
+  lastInboundAt?: string
+  lastOutboundAt?: string
+  lastText?: string
+  lastError?: string
+}
+
+export interface ChatBridgeSnapshot {
+  enabled: boolean
+  webhookPort: number
+  webhookUrl: string
+  project: {
+    mode: 'active' | 'fixed'
+    cwd?: string
+    projectName?: string
+  }
+  security: {
+    requirePairing: boolean
+    pairingCode: string
+    trustedRoutes: Record<string, { pairedAt: string; label?: string }>
+  }
+  channels: ChatChannelStatus[]
+  routes: ChatBridgeRouteState[]
+  events: ChatBridgeEvent[]
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -78,6 +172,7 @@ declare global {
       pluginsUninstall: (id: string) => Promise<InstalledPlugin[]>
       pluginsSetEnabled: (id: string, enabled: boolean) => Promise<InstalledPlugin[]>
       listSkills: (sessionId: string) => Promise<SkillListItem[]>
+      onSessionChanged?: (callback: (payload: SessionChangedPayload) => void) => () => void
       agentAbort?: (sessionId: string, agentToolUseId: string) => Promise<void>
       // Apps
       appsDetect: () => Promise<{ apps: { id: string; name: string; shortName: string; available: boolean }[] }>
@@ -113,6 +208,23 @@ declare global {
       getVersion?: () => Promise<string>
       // Model
       modelTest?: (params: { protocol: string; baseUrl: string; apiKey: string; modelId: string }) => Promise<{ success: boolean; reply?: string; error?: string }>
+      // Chat Bridge
+      chatBridgeGet?: () => Promise<ChatBridgeSnapshot>
+      chatBridgeChannels?: () => Promise<ChatChannelConfig[]>
+      chatBridgeStart?: () => Promise<ChatBridgeSnapshot>
+      chatBridgeStop?: () => Promise<ChatBridgeSnapshot>
+      chatBridgeStartChannel?: (channelId: string) => Promise<ChatBridgeSnapshot>
+      chatBridgeStopChannel?: (channelId: string) => Promise<ChatBridgeSnapshot>
+      chatBridgeSaveChannel?: (channel: ChatChannelConfig) => Promise<ChatBridgeSnapshot>
+      chatBridgeLoginChannel?: (channelId: string) => Promise<{ snapshot: ChatBridgeSnapshot; qrcode?: string; qrCodeText?: string; message: string }>
+      chatBridgePollLogin?: (channelId: string, qrcode: string) => Promise<{ snapshot: ChatBridgeSnapshot; message: string; done: boolean }>
+      chatBridgeResetRoute?: (routeKey: string) => Promise<ChatBridgeSnapshot>
+      chatBridgeNewRouteSession?: (routeKey: string) => Promise<ChatBridgeSnapshot>
+      chatBridgeUntrustRoute?: (routeKey: string) => Promise<ChatBridgeSnapshot>
+      chatBridgeSaveSecurity?: (security: Partial<ChatBridgeSnapshot['security']>) => Promise<ChatBridgeSnapshot>
+      chatBridgeRegeneratePairingCode?: () => Promise<ChatBridgeSnapshot>
+      chatBridgeSaveProject?: (project: Partial<ChatBridgeSnapshot['project']>) => Promise<ChatBridgeSnapshot>
+      onChatBridgeStateChanged?: (callback: (snapshot: ChatBridgeSnapshot) => void) => () => void
       // CodeGraph
       codegraphApi: {
         init: (cwd: string) => Promise<void>
@@ -179,6 +291,14 @@ export interface SessionSearchResult {
   }[]
 }
 
+export interface SessionChangedPayload {
+  action: 'created' | 'deleted' | 'renamed'
+  sessionId: string
+  projectName?: string
+  cwd?: string
+  title?: string
+}
+
 export const ipc = {
   session: {
     create: (projectName: string, cwd: string) =>
@@ -197,6 +317,8 @@ export const ipc = {
       invoke('session:set-model', { sessionId, modelId }) as Promise<{ success: boolean }>,
     getModel: (sessionId: string) =>
       invoke('session:get-model', { sessionId }) as Promise<{ modelId: string | null }>,
+    onChanged: (cb: (payload: SessionChangedPayload) => void) =>
+      window.electronAPI?.onSessionChanged?.(cb) || on('session:changed', (_e, data) => cb(data as SessionChangedPayload)),
   },
 
   query: {
@@ -221,6 +343,41 @@ export const ipc = {
       invoke('config:get') as Promise<AppConfig>,
     set: (config: Partial<AppConfig>) =>
       invoke('config:set', config) as Promise<{ success: boolean }>,
+  },
+
+  chatBridge: {
+    get: () =>
+      invoke('chat-bridge:get') as Promise<ChatBridgeSnapshot>,
+    channels: () =>
+      invoke('chat-bridge:channels') as Promise<ChatChannelConfig[]>,
+    start: () =>
+      invoke('chat-bridge:start') as Promise<ChatBridgeSnapshot>,
+    stop: () =>
+      invoke('chat-bridge:stop') as Promise<ChatBridgeSnapshot>,
+    startChannel: (channelId: string) =>
+      invoke('chat-bridge:start-channel', { channelId }) as Promise<ChatBridgeSnapshot>,
+    stopChannel: (channelId: string) =>
+      invoke('chat-bridge:stop-channel', { channelId }) as Promise<ChatBridgeSnapshot>,
+    saveChannel: (channel: ChatChannelConfig) =>
+      invoke('chat-bridge:save-channel', { channel }) as Promise<ChatBridgeSnapshot>,
+    loginChannel: (channelId: string) =>
+      invoke('chat-bridge:login-channel', { channelId }) as Promise<{ snapshot: ChatBridgeSnapshot; qrcode?: string; qrCodeText?: string; message: string }>,
+    pollLogin: (channelId: string, qrcode: string) =>
+      invoke('chat-bridge:poll-login', { channelId, qrcode }) as Promise<{ snapshot: ChatBridgeSnapshot; message: string; done: boolean }>,
+    resetRoute: (routeKey: string) =>
+      invoke('chat-bridge:reset-route', { routeKey }) as Promise<ChatBridgeSnapshot>,
+    newRouteSession: (routeKey: string) =>
+      invoke('chat-bridge:new-route-session', { routeKey }) as Promise<ChatBridgeSnapshot>,
+    untrustRoute: (routeKey: string) =>
+      invoke('chat-bridge:untrust-route', { routeKey }) as Promise<ChatBridgeSnapshot>,
+    saveSecurity: (security: Partial<ChatBridgeSnapshot['security']>) =>
+      invoke('chat-bridge:save-security', { security }) as Promise<ChatBridgeSnapshot>,
+    regeneratePairingCode: () =>
+      invoke('chat-bridge:regenerate-pairing-code') as Promise<ChatBridgeSnapshot>,
+    saveProject: (project: Partial<ChatBridgeSnapshot['project']>) =>
+      invoke('chat-bridge:save-project', { project }) as Promise<ChatBridgeSnapshot>,
+    onStateChanged: (cb: (snapshot: ChatBridgeSnapshot) => void) =>
+      on('chat-bridge:state-changed', (_e, data) => cb(data as ChatBridgeSnapshot)),
   },
 
   dialog: {

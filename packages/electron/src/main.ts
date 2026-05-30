@@ -10,6 +10,7 @@ import { GitService } from './git-service.js'
 import { AppLauncher } from './app-launcher.js'
 import { TerminalService } from './terminal-service.js'
 import { PluginMarketplaceService } from './plugin-marketplace-service.js'
+import { ChatBridgeService } from './chat-bridge-service.js'
 
 // Mirror console output to a file so production users can ship logs back.
 // Path: %APPDATA%\Pudding-Agent\logs\main.log on Windows, ~/Library/Logs/Pudding-Agent/main.log on macOS.
@@ -48,13 +49,19 @@ const gitService = new GitService()
 const appLauncher = new AppLauncher()
 const terminalService = new TerminalService()
 const pluginMarketplaceService = new PluginMarketplaceService()
+const chatBridgeService = new ChatBridgeService(sessionManager)
 
 // Auto-updater setup
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = true
 
+function getUpdaterRawError(err: unknown): string {
+  if (err instanceof Error) return `${err.message}\n${err.stack || ''}`.trim()
+  return String(err ?? '')
+}
+
 function getUpdaterErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err ?? '')
+  const raw = getUpdaterRawError(err)
 
   if (/404|not found|releases\.atom|cannot find latest|no published versions/i.test(raw)) {
     return '未找到更新发布源，请确认 GitHub Releases 已发布后再试。'
@@ -84,7 +91,7 @@ function setupAutoUpdater(win: BrowserWindow) {
   })
   autoUpdater.on('error', (err) => {
     const message = getUpdaterErrorMessage(err)
-    console.error('[Pudding-Agent] updater error:', message)
+    console.error('[Pudding-Agent] updater error:', message, getUpdaterRawError(err))
     win.webContents.send('updater:error', { message })
   })
 
@@ -120,20 +127,19 @@ app.whenReady().then(async () => {
   }
 
   await sessionManager.ensureReady()
-  registerIpcHandlers(sessionManager, { gitService, appLauncher, terminalService, pluginMarketplaceService })
+  registerIpcHandlers(sessionManager, { gitService, appLauncher, terminalService, pluginMarketplaceService, chatBridgeService })
   registerMcpIpcHandlers(sessionManager)
 
   const win = createMainWindow()
   sessionManager.setWindow(win)
   terminalService.setWindow(win)
+  chatBridgeService.setWindow(win)
   setupAutoUpdater(win)
 
   win.webContents.on('did-finish-load', () => {
     sessionManager.initMcp(process.env.HOME || '/').catch((err) => {
       console.error('[Pudding-Agent] MCP init error:', err.message)
     })
-    // Check for updates on launch (non-blocking)
-    autoUpdater.checkForUpdates().catch(() => {})
   })
 
   app.on('activate', () => {
@@ -141,6 +147,7 @@ app.whenReady().then(async () => {
       const newWin = createMainWindow()
       sessionManager.setWindow(newWin)
       terminalService.setWindow(newWin)
+      chatBridgeService.setWindow(newWin)
     }
   })
 })
@@ -153,5 +160,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   terminalService.destroyAll()
+  chatBridgeService.close()
   sessionManager.close()
 })

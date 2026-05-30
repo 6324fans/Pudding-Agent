@@ -16,6 +16,7 @@ import { useSettingsStore } from './stores/settings-store'
 import { useTerminalStore } from './stores/terminal-store'
 import { useHotkeys } from './hooks/useHotkeys'
 import { initIdeListeners } from './stores/ide-store'
+import { ipc } from './lib/ipc-client'
 
 export function App() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
@@ -25,6 +26,7 @@ export function App() {
   const createSession = useSessionStore((s) => s.createSession)
   const deleteSession = useSessionStore((s) => s.deleteSession)
   const switchSession = useSessionStore((s) => s.switchSession)
+  const loadProjects = useSessionStore((s) => s.loadProjects)
   const loadModels = useModelStore((s) => s.loadFromConfig)
   const settingsIsOpen = useSettingsStore((s) => s.isOpen)
   const openSettings = useSettingsStore((s) => s.open)
@@ -32,6 +34,11 @@ export function App() {
 
   useEffect(() => { loadModels() }, [loadModels])
   useEffect(() => { return initIdeListeners() }, [])
+  useEffect(() => {
+    return ipc.session.onChanged(() => {
+      loadProjects({ preserveActive: true })
+    })
+  }, [loadProjects])
 
   const activeProject = projects.find((p) =>
     p.sessions.some((s) => s.id === activeSessionId)

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import QRCode from 'qrcode'
 import { useSettingsStore, type SettingsTab } from '../stores/settings-store'
 import { useModelStore, type ApiProtocol, type ModelGroup } from '../stores/model-store'
 import { useSessionStore } from '../stores/session-store'
 import { ThemeSegmented } from './ThemeSegmented'
 import { IconX } from './icons'
 import { useCodegraph } from '../hooks/useCodegraph'
-import type { MarketplacePlugin, McpServerState, PluginMarketplace, SkillListItem } from '../lib/ipc-client'
+import { ipc, type ChatBridgeEvent, type ChatBridgeRouteState, type ChatBridgeSnapshot, type ChatChannelConfig, type ChatChannelState, type MarketplacePlugin, type McpServerState, type PluginMarketplace, type SkillListItem } from '../lib/ipc-client'
 
 function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
   const [show, setShow] = useState(false)
@@ -73,6 +74,7 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'plugins', label: '插件' },
   { key: 'mcp', label: 'MCP' },
   { key: 'skills', label: '技能' },
+  { key: 'chatBridge', label: '聊天桥接' },
   { key: 'shortcuts', label: '快捷键' },
   { key: 'advanced', label: '版本信息' },
 ]
@@ -80,6 +82,9 @@ const TABS: { key: SettingsTab; label: string }[] = [
 function sanitizeUpdaterError(message?: string): string {
   const raw = (message || '').replace(/\s+/g, ' ').trim()
 
+  if (/未找到更新发布源|无法访问更新发布源|网络连接异常/.test(raw)) {
+    return raw
+  }
   if (/404|not found|releases\.atom|cannot find latest|no published versions/i.test(raw)) {
     return '未找到更新发布源，请确认 GitHub Releases 已发布后再试。'
   }
@@ -138,6 +143,7 @@ export function SettingsOverlay() {
           {activeTab === 'plugins' && <PluginsTab />}
           {activeTab === 'mcp' && <McpTab />}
           {activeTab === 'skills' && <SkillsTab />}
+          {activeTab === 'chatBridge' && <ChatBridgeTab />}
           {activeTab === 'shortcuts' && <ShortcutsTab />}
           {activeTab === 'advanced' && <AdvancedTab />}
         </div>
@@ -326,6 +332,641 @@ function ShortcutsTab() {
         ))}
       </tbody>
     </table>
+  )
+}
+
+/* ─── Chat Bridge ─── */
+function ChatBridgeTab() {
+  const projects = useSessionStore((s) => s.projects)
+  const [snapshot, setSnapshot] = useState<ChatBridgeSnapshot | null>(null)
+  const [channels, setChannels] = useState<ChatChannelConfig[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [login, setLogin] = useState<{ channelId: string; qrcode?: string; qrCodeText?: string; message: string } | null>(null)
+  const [polling, setPolling] = useState(false)
+
+  const load = useCallback(async () => {
+    const [nextSnapshot, nextChannels] = await Promise.all([
+      ipc.chatBridge.get(),
+      ipc.chatBridge.channels(),
+    ])
+    setSnapshot(nextSnapshot)
+    setChannels(nextChannels)
+  }, [])
+
+  useEffect(() => {
+    load()
+    const unsubscribe = ipc.chatBridge.onStateChanged((next) => setSnapshot(next))
+    return () => unsubscribe()
+  }, [load])
+
+  const updateSnapshot = (next: ChatBridgeSnapshot) => {
+    setSnapshot(next)
+    ipc.chatBridge.channels().then(setChannels).catch(() => undefined)
+  }
+
+  const run = async (key: string, action: () => Promise<ChatBridgeSnapshot>) => {
+    setBusy(key)
+    try {
+      updateSnapshot(await action())
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const startLogin = async (channelId: string) => {
+    setBusy(`login:${channelId}`)
+    try {
+      const result = await ipc.chatBridge.loginChannel(channelId)
+      updateSnapshot(result.snapshot)
+      setLogin({ channelId, qrcode: result.qrcode, qrCodeText: result.qrCodeText, message: result.message })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const pollLogin = async () => {
+    if (!login?.channelId || !login.qrcode) return
+    setPolling(true)
+    try {
+      const result = await ipc.chatBridge.pollLogin(login.channelId, login.qrcode)
+      updateSnapshot(result.snapshot)
+      setLogin(prev => prev ? { ...prev, message: result.message } : prev)
+      if (result.done) setLogin(null)
+    } finally {
+      setPolling(false)
+    }
+  }
+
+  const saveChannel = async (channel: ChatChannelConfig) => {
+    setBusy(`save:${channel.id}`)
+    try {
+      updateSnapshot(await ipc.chatBridge.saveChannel(channel))
+      const nextChannels = await ipc.chatBridge.channels()
+      setChannels(nextChannels)
+      setEditingId(null)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const eventList = snapshot?.events || []
+  const routeList = snapshot?.routes || []
+  const bridgeProject = snapshot?.project
+  const security = snapshot?.security
+  const totals = routeList.reduce((acc, route) => {
+    acc.inbound += route.inboundCount
+    acc.outbound += route.outboundCount
+    if (route.pending) acc.pending += 1
+    return acc
+  }, { inbound: 0, outbound: 0, pending: 0 })
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="flex items-center justify-between pr-8">
+          <div>
+            <h3 className="text-[13px] font-medium text-[var(--text)]">聊天桥接</h3>
+            <p className="mt-1 text-[12px] text-[var(--muted)]">管理微信和飞书入口，把远程聊天接到 Pudding-Agent。</p>
+          </div>
+          <button
+            onClick={() => snapshot?.enabled ? run('bridge', ipc.chatBridge.stop) : run('bridge', ipc.chatBridge.start)}
+            disabled={busy === 'bridge'}
+            className={`rounded-[6px] px-3 py-1.5 text-[12px] transition-colors ${
+              snapshot?.enabled
+                ? 'border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]'
+                : 'bg-[var(--accent)] text-[var(--accent-ink)]'
+            } disabled:opacity-50`}
+          >
+            {busy === 'bridge' ? '处理中...' : snapshot?.enabled ? '停止桥接' : '启动桥接'}
+          </button>
+        </div>
+        <div className="mt-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] uppercase tracking-[0.12em] text-[var(--muted)]">Webhook</div>
+              <div className="mt-1 truncate font-mono text-[12px] text-[var(--text)]">{snapshot?.webhookUrl || '未启动'}</div>
+            </div>
+            <span className={`shrink-0 rounded-[999px] px-2 py-1 text-[11px] ${snapshot?.enabled ? 'bg-emerald-500/10 text-[var(--good)]' : 'bg-[var(--surface-3)] text-[var(--muted)]'}`}>
+              {snapshot?.enabled ? '运行中' : '已停止'}
+            </span>
+          </div>
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            <BridgeMetric label="渠道" value={`${snapshot?.channels.length || 0}`} />
+            <BridgeMetric label="路由" value={`${routeList.length}`} />
+            <BridgeMetric label="入站" value={`${totals.inbound}`} />
+            <BridgeMetric label="待回复" value={`${totals.pending}`} tone={totals.pending ? 'warn' : undefined} />
+          </div>
+        </div>
+      </div>
+
+      {bridgeProject && (
+        <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <h3 className="text-[13px] font-medium text-[var(--text)]">默认项目</h3>
+              <p className="mt-1 text-[12px] text-[var(--muted)]">微信/飞书新建会话时使用的项目；已有路由不会被改变。</p>
+              <select
+                value={bridgeProject.mode === 'fixed' ? bridgeProject.cwd || '' : '__active__'}
+                onChange={(e) => {
+                  const value = e.target.value
+                  if (value === '__active__') {
+                    run('bridge-project', () => ipc.chatBridge.saveProject({ mode: 'active' }))
+                    return
+                  }
+                  const project = projects.find(p => p.cwd === value)
+                  run('bridge-project', () => ipc.chatBridge.saveProject({ mode: 'fixed', cwd: value, projectName: project?.name }))
+                }}
+                disabled={busy === 'bridge-project'}
+                className="mt-3 w-full rounded-[6px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--border-strong)] disabled:opacity-50"
+              >
+                <option value="__active__">跟随当前激活项目</option>
+                {projects.map(project => (
+                  <option key={project.cwd} value={project.cwd}>{project.name} - {project.cwd}</option>
+                ))}
+              </select>
+            </div>
+            <span className="shrink-0 rounded-[999px] bg-[var(--surface-2)] px-2 py-1 text-[11px] text-[var(--muted)]">
+              {bridgeProject.mode === 'fixed' ? '固定项目' : '跟随当前'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {security && (
+        <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-[13px] font-medium text-[var(--text)]">远程配对保护</h3>
+              <p className="mt-1 text-[12px] text-[var(--muted)]">开启后，新的微信/飞书聊天窗口必须先发送配对码。</p>
+              <div className="mt-3 flex items-center gap-3">
+                <span className="rounded-[6px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 font-mono text-[14px] text-[var(--text)]">{security.pairingCode}</span>
+                <button
+                  onClick={() => run('pairing-code', ipc.chatBridge.regeneratePairingCode)}
+                  disabled={busy === 'pairing-code'}
+                  className="rounded-[6px] border border-[var(--border)] px-2.5 py-1.5 text-[12px] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-50"
+                >
+                  刷新配对码
+                </button>
+              </div>
+            </div>
+            <label className="flex shrink-0 items-center gap-2 text-[12px] text-[var(--muted)]">
+              <input
+                type="checkbox"
+                checked={security.requirePairing}
+                onChange={(e) => run('pairing-toggle', () => ipc.chatBridge.saveSecurity({ requirePairing: e.target.checked }))}
+              />
+              启用配对
+            </label>
+          </div>
+        </div>
+      )}
+
+      {login && (
+        <div className="rounded-[8px] border border-[var(--accent-soft)] bg-[var(--surface-2)] p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h4 className="text-[13px] font-medium text-[var(--text)]">微信登录</h4>
+              <p className="mt-1 text-[12px] text-[var(--muted)]">{login.message}</p>
+              <WeixinQrCode value={login.qrCodeText} />
+            </div>
+            <div className="flex shrink-0 flex-col gap-2">
+              <button
+                onClick={pollLogin}
+                disabled={polling || !login.qrcode}
+                className="rounded-[6px] bg-[var(--accent)] px-3 py-1.5 text-[12px] text-[var(--accent-ink)] disabled:opacity-50"
+              >
+                {polling ? '检查中...' : '我已扫码'}
+              </button>
+              <button
+                onClick={() => setLogin(null)}
+                className="rounded-[6px] border border-[var(--border)] px-3 py-1.5 text-[12px] text-[var(--muted)] hover:text-[var(--text)]"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {channels.map((channel) => (
+          <ChatChannelCard
+            key={channel.id}
+            channel={channel}
+            status={snapshot?.channels.find(s => s.channelId === channel.id)}
+            editing={editingId === channel.id}
+            busy={busy}
+            webhookUrl={snapshot?.webhookUrl || ''}
+            onEdit={() => setEditingId(channel.id)}
+            onCancel={() => setEditingId(null)}
+            onSave={saveChannel}
+            onStart={() => run(`start:${channel.id}`, () => ipc.chatBridge.startChannel(channel.id))}
+            onStop={() => run(`stop:${channel.id}`, () => ipc.chatBridge.stopChannel(channel.id))}
+            onLogin={() => startLogin(channel.id)}
+          />
+        ))}
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-[13px] font-medium text-[var(--text)]">会话路由</h3>
+        <div className="overflow-hidden rounded-[8px] border border-[var(--border)]">
+          {routeList.length === 0 ? (
+            <div className="px-4 py-6 text-center text-[12px] text-[var(--muted)]">收到第一条远程消息后会自动创建路由</div>
+          ) : (
+            routeList.map(route => (
+              <ChatBridgeRouteRow
+                key={route.routeKey}
+                route={route}
+                busy={busy}
+                onReset={() => run(`route-reset:${route.routeKey}`, () => ipc.chatBridge.resetRoute(route.routeKey))}
+                onNewSession={() => run(`route-new:${route.routeKey}`, () => ipc.chatBridge.newRouteSession(route.routeKey))}
+                onUntrust={() => run(`route-untrust:${route.routeKey}`, () => ipc.chatBridge.untrustRoute(route.routeKey))}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-[13px] font-medium text-[var(--text)]">最近事件</h3>
+        <div className="max-h-[220px] overflow-y-auto rounded-[8px] border border-[var(--border)]">
+          {eventList.length === 0 ? (
+            <div className="px-4 py-6 text-center text-[12px] text-[var(--muted)]">暂无事件</div>
+          ) : (
+            eventList.map(event => <ChatBridgeEventRow key={event.id} event={event} />)
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ChatChannelCard({
+  channel,
+  status,
+  editing,
+  busy,
+  webhookUrl,
+  onEdit,
+  onCancel,
+  onSave,
+  onStart,
+  onStop,
+  onLogin,
+}: {
+  channel: ChatChannelConfig
+  status?: ChatBridgeSnapshot['channels'][number]
+  editing: boolean
+  busy: string | null
+  webhookUrl: string
+  onEdit: () => void
+  onCancel: () => void
+  onSave: (channel: ChatChannelConfig) => void
+  onStart: () => void
+  onStop: () => void
+  onLogin: () => void
+}) {
+  const state = status?.state || 'stopped'
+  const isBusy = busy?.endsWith(`:${channel.id}`)
+
+  return (
+    <div className="overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface)]">
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={`h-2.5 w-2.5 rounded-full ${stateDotClass(state)}`} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-medium text-[var(--text)]">{channel.label}</span>
+              <span className="rounded-[4px] bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">{channel.kind === 'weixin' ? '微信' : '飞书'}</span>
+            </div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--muted)]">{channel.id}</div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={`rounded-[999px] px-2 py-1 text-[11px] ${stateBadgeClass(state)}`}>{stateLabel(state)}</span>
+          {channel.kind === 'weixin' && (
+            <button onClick={onLogin} disabled={isBusy} className="rounded-[6px] border border-[var(--border)] px-2.5 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50">
+              登录
+            </button>
+          )}
+          {state === 'connected' || state === 'starting' ? (
+            <button onClick={onStop} disabled={isBusy} className="rounded-[6px] border border-[var(--border)] px-2.5 py-1.5 text-[12px] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-50">
+              停止
+            </button>
+          ) : (
+            <button onClick={onStart} disabled={isBusy || !channel.enabled} className="rounded-[6px] bg-[var(--accent)] px-2.5 py-1.5 text-[12px] text-[var(--accent-ink)] disabled:opacity-50">
+              启动
+            </button>
+          )}
+          <button onClick={editing ? onCancel : onEdit} className="rounded-[6px] border border-[var(--border)] px-2.5 py-1.5 text-[12px] text-[var(--muted)] hover:text-[var(--text)]">
+            {editing ? '收起' : '配置'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 px-4 py-3 text-[12px]">
+        <InfoLine label="账号" value={status?.account || channel.accountId || '未绑定'} />
+        <InfoLine label="最近入站" value={status?.lastInboundAt ? formatTime(status.lastInboundAt) : '暂无'} />
+        <InfoLine label="最近出站" value={status?.lastOutboundAt ? formatTime(status.lastOutboundAt) : '暂无'} />
+        <InfoLine label="能力" value={capabilityText(status)} />
+      </div>
+
+      {status?.lastError && (
+        <div className="mx-4 mb-3 rounded-[6px] border border-red-500/20 bg-red-500/5 px-3 py-2 text-[12px] text-[var(--bad)]">
+          {status.lastError}
+        </div>
+      )}
+
+      {editing && (
+        <ChatChannelForm channel={channel} webhookUrl={webhookUrl} onSave={onSave} onCancel={onCancel} />
+      )}
+    </div>
+  )
+}
+
+function BridgeMetric({ label, value, tone }: { label: string; value: string; tone?: 'warn' }) {
+  return (
+    <div className="rounded-[6px] border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+      <div className="text-[11px] text-[var(--muted)]">{label}</div>
+      <div className={`mt-1 font-mono text-[14px] ${tone === 'warn' ? 'text-[var(--warn)]' : 'text-[var(--text)]'}`}>{value}</div>
+    </div>
+  )
+}
+
+function ChatBridgeRouteRow({
+  route,
+  busy,
+  onReset,
+  onNewSession,
+  onUntrust,
+}: {
+  route: ChatBridgeRouteState
+  busy: string | null
+  onReset: () => void
+  onNewSession: () => void
+  onUntrust: () => void
+}) {
+  const isBusy = busy === `route-reset:${route.routeKey}` || busy === `route-new:${route.routeKey}` || busy === `route-untrust:${route.routeKey}`
+
+  return (
+    <div className="border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 last:border-b-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${route.lastError ? 'bg-[var(--bad)]' : route.pending ? 'bg-[var(--warn)] animate-pulse' : 'bg-[var(--good)]'}`} />
+            <span className="truncate text-[13px] font-medium text-[var(--text)]">{route.conversationName || route.routeKey}</span>
+            <span className="rounded-[4px] bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">{route.channelId}</span>
+            <span className={`rounded-[4px] px-1.5 py-0.5 text-[10px] ${route.trusted ? 'bg-emerald-500/10 text-[var(--good)]' : 'bg-amber-500/10 text-[var(--warn)]'}`}>{route.trusted ? '可信' : '未配对'}</span>
+          </div>
+          <div className="mt-1 truncate font-mono text-[11px] text-[var(--muted)]">{route.sessionId || '未绑定会话'}</div>
+          {route.lastText && <div className="mt-2 truncate text-[12px] text-[var(--muted)]">{route.lastText}</div>}
+          {route.lastError && <div className="mt-2 truncate text-[12px] text-[var(--bad)]">{route.lastError}</div>}
+        </div>
+        <div className="shrink-0">
+          <div className="grid grid-cols-3 gap-2 text-right">
+            <RouteStat label="入" value={route.inboundCount} />
+            <RouteStat label="出" value={route.outboundCount} />
+            <RouteStat label="状态" value={route.pending ? '处理中' : '空闲'} />
+          </div>
+          <div className="mt-2 flex justify-end gap-2">
+            <button
+              onClick={onNewSession}
+              disabled={isBusy}
+              className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--text)] hover:bg-[var(--surface-2)] disabled:opacity-50"
+            >
+              新会话
+            </button>
+            <button
+              onClick={onReset}
+              disabled={isBusy || !route.sessionId}
+              className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-50"
+            >
+              解绑
+            </button>
+            <button
+              onClick={onUntrust}
+              disabled={isBusy || !route.trusted}
+              className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-50"
+            >
+              取消信任
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 flex gap-3 text-[11px] text-[var(--muted)]">
+        <span>{route.senderName || '未知发送者'}</span>
+        <span>{route.lastInboundAt ? `入站 ${formatTime(route.lastInboundAt)}` : '暂无入站'}</span>
+        <span>{route.lastOutboundAt ? `出站 ${formatTime(route.lastOutboundAt)}` : '暂无出站'}</span>
+      </div>
+    </div>
+  )
+}
+
+function RouteStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="min-w-[52px] rounded-[6px] bg-[var(--surface-2)] px-2 py-1">
+      <div className="text-[10px] text-[var(--muted)]">{label}</div>
+      <div className="mt-0.5 truncate font-mono text-[11px] text-[var(--text)]">{value}</div>
+    </div>
+  )
+}
+
+function ChatChannelForm({ channel, webhookUrl, onSave, onCancel }: { channel: ChatChannelConfig; webhookUrl: string; onSave: (channel: ChatChannelConfig) => void; onCancel: () => void }) {
+  const [draft, setDraft] = useState<ChatChannelConfig>(channel)
+  const inputCls = 'w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[6px] px-3 py-2 text-[13px] text-[var(--text)] outline-none focus:border-[var(--border-strong)]'
+  const labelCls = 'space-y-1.5 text-[12px] text-[var(--muted)]'
+
+  useEffect(() => setDraft(channel), [channel])
+
+  const update = (patch: Partial<ChatChannelConfig>) => setDraft(prev => ({ ...prev, ...patch }))
+  const updateWeixin = (patch: NonNullable<ChatChannelConfig['weixin']>) => setDraft(prev => ({ ...prev, weixin: { ...(prev.weixin || {}), ...patch } }))
+  const updateFeishu = (patch: NonNullable<ChatChannelConfig['feishu']>) => setDraft(prev => ({ ...prev, feishu: { ...(prev.feishu || {}), ...patch } }))
+  const feishuPath = draft.feishu?.webhookPath || `/chat-bridge/feishu/${draft.id}`
+
+  return (
+    <div className="border-t border-[var(--border)] bg-[var(--surface-2)] px-4 py-4">
+      <div className="grid grid-cols-2 gap-3">
+        <label className={labelCls}>
+          显示名称
+          <input value={draft.label} onChange={(e) => update({ label: e.target.value })} className={inputCls} />
+        </label>
+        <label className={labelCls}>
+          账号标识
+          <input value={draft.accountId || ''} onChange={(e) => update({ accountId: e.target.value })} placeholder="default" className={inputCls} />
+        </label>
+        <label className="col-span-2 flex items-center gap-2 text-[12px] text-[var(--muted)]">
+          <input type="checkbox" checked={draft.enabled} onChange={(e) => update({ enabled: e.target.checked })} />
+          启用这个渠道
+        </label>
+      </div>
+
+      {draft.kind === 'weixin' ? (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <label className={labelCls}>
+            Base URL
+            <input value={draft.weixin?.baseUrl || ''} onChange={(e) => updateWeixin({ baseUrl: e.target.value })} placeholder="https://ilinkai.weixin.qq.com" className={inputCls} />
+          </label>
+          <label className={labelCls}>
+            Bot Type
+            <input value={draft.weixin?.botType || ''} onChange={(e) => updateWeixin({ botType: e.target.value })} placeholder="3" className={inputCls} />
+          </label>
+          <label className={labelCls}>
+            Channel Version
+            <input value={draft.weixin?.channelVersion || ''} onChange={(e) => updateWeixin({ channelVersion: e.target.value })} placeholder="2.4.3" className={inputCls} />
+          </label>
+          <label className={labelCls}>
+            Token
+            <input type="password" value={draft.weixin?.token || ''} onChange={(e) => updateWeixin({ token: e.target.value })} placeholder="扫码后自动写入，也可手动粘贴" className={inputCls} />
+          </label>
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <label className={labelCls}>
+            App ID
+            <input value={draft.feishu?.appId || ''} onChange={(e) => updateFeishu({ appId: e.target.value })} placeholder="cli_xxx" className={inputCls} />
+          </label>
+          <label className={labelCls}>
+            App Secret
+            <input type="password" value={draft.feishu?.appSecret || ''} onChange={(e) => updateFeishu({ appSecret: e.target.value })} placeholder="飞书应用密钥" className={inputCls} />
+          </label>
+          <label className={labelCls}>
+            Verification Token
+            <input type="password" value={draft.feishu?.verificationToken || ''} onChange={(e) => updateFeishu({ verificationToken: e.target.value })} placeholder="可选" className={inputCls} />
+          </label>
+          <label className={labelCls}>
+            Encrypt Key
+            <input type="password" value={draft.feishu?.encryptKey || ''} onChange={(e) => updateFeishu({ encryptKey: e.target.value })} placeholder="暂不解密，先预留" className={inputCls} />
+          </label>
+          <label className="col-span-2 space-y-1.5 text-[12px] text-[var(--muted)]">
+            Webhook Path
+            <input value={feishuPath} onChange={(e) => updateFeishu({ webhookPath: e.target.value })} className={inputCls} />
+            <span className="block font-mono text-[11px] text-[var(--muted)]">{webhookUrl}{feishuPath}</span>
+          </label>
+        </div>
+      )}
+
+      <div className="mt-4 flex gap-2">
+        <button onClick={() => onSave(draft)} className="rounded-[6px] bg-[var(--accent)] px-3 py-1.5 text-[12px] text-[var(--accent-ink)]">保存</button>
+        <button onClick={onCancel} className="rounded-[6px] border border-[var(--border)] px-3 py-1.5 text-[12px] text-[var(--muted)] hover:text-[var(--text)]">取消</button>
+      </div>
+    </div>
+  )
+}
+
+function ChatBridgeEventRow({ event }: { event: ChatBridgeEvent }) {
+  return (
+    <div className="border-b border-[var(--border)] px-4 py-2.5 last:border-b-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${eventDotClass(event.kind)}`} />
+          <span className="truncate text-[12px] text-[var(--text)]">{event.text}</span>
+        </div>
+        <span className="shrink-0 font-mono text-[11px] text-[var(--muted)]">{formatTime(event.timestamp)}</span>
+      </div>
+      <div className="mt-1 flex gap-2 font-mono text-[11px] text-[var(--muted)]">
+        <span>{event.channelId}</span>
+        {event.routeKey && <span className="truncate">{event.routeKey}</span>}
+      </div>
+    </div>
+  )
+}
+
+function InfoLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[11px] text-[var(--muted)]">{label}</div>
+      <div className="mt-0.5 truncate text-[12px] text-[var(--text)]">{value}</div>
+    </div>
+  )
+}
+
+function stateLabel(state: ChatChannelState): string {
+  const labels: Record<ChatChannelState, string> = {
+    stopped: '已停止',
+    starting: '启动中',
+    login_required: '待登录',
+    connected: '已连接',
+    degraded: '降级',
+    failed: '失败',
+  }
+  return labels[state]
+}
+
+function stateDotClass(state: ChatChannelState): string {
+  if (state === 'connected') return 'bg-[var(--good)]'
+  if (state === 'starting') return 'bg-[var(--warn)] animate-pulse'
+  if (state === 'failed' || state === 'degraded') return 'bg-[var(--bad)]'
+  if (state === 'login_required') return 'bg-[var(--warn)]'
+  return 'bg-[var(--muted)]'
+}
+
+function stateBadgeClass(state: ChatChannelState): string {
+  if (state === 'connected') return 'bg-emerald-500/10 text-[var(--good)]'
+  if (state === 'failed' || state === 'degraded') return 'bg-red-500/10 text-[var(--bad)]'
+  if (state === 'login_required' || state === 'starting') return 'bg-amber-500/10 text-[var(--warn)]'
+  return 'bg-[var(--surface-2)] text-[var(--muted)]'
+}
+
+function eventDotClass(kind: ChatBridgeEvent['kind']): string {
+  if (kind === 'error') return 'bg-[var(--bad)]'
+  if (kind === 'inbound') return 'bg-[var(--accent)]'
+  if (kind === 'login') return 'bg-[var(--warn)]'
+  return 'bg-[var(--good)]'
+}
+
+function capabilityText(status?: ChatBridgeSnapshot['channels'][number]): string {
+  if (!status) return '未知'
+  const caps = status.capabilities
+  const items = [caps.text && '文本', caps.media && '媒体', caps.typing && 'Typing', caps.direct && '私聊', caps.group && '群聊'].filter(Boolean)
+  return items.join(' / ') || '无'
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
+function WeixinQrCode({ value }: { value?: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const text = value?.trim() || ''
+
+  useEffect(() => {
+    let cancelled = false
+    setSrc(null)
+    if (!text) return
+    if (/^data:image\//i.test(text)) {
+      setSrc(text)
+      return
+    }
+    QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 2, width: 240 })
+      .then(url => {
+        if (!cancelled) setSrc(url)
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [text])
+
+  if (!text) {
+    return <p className="mt-2 text-[12px] text-[var(--muted)]">二维码内容为空</p>
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="inline-flex h-[264px] w-[264px] items-center justify-center rounded-[8px] border border-[var(--border)] bg-white p-3">
+        {src ? (
+          <img src={src} alt="微信登录二维码" className="h-60 w-60" />
+        ) : (
+          <span className="text-[12px] text-zinc-500">二维码生成失败</span>
+        )}
+      </div>
+      <p className="max-w-[360px] break-all font-mono text-[11px] text-[var(--muted)]">{text}</p>
+    </div>
   )
 }
 

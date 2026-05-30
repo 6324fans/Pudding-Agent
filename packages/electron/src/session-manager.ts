@@ -23,6 +23,19 @@ function getActiveModelConfig() {
   return null
 }
 
+export interface PendingPermissionInfo {
+  id: string
+  sessionId: string
+  toolName: string
+  input: Record<string, unknown>
+  createdAt: string
+  assistantContext?: string
+}
+
+export interface ResolvedPermissionInfo extends PendingPermissionInfo {
+  allowed: boolean
+}
+
 export class SessionManager {
   private sessions = new Map<string, Session>()
   private history: ConversationHistory
@@ -30,10 +43,13 @@ export class SessionManager {
   private ideManager: IdeManager
   private window: BrowserWindow | null = null
   private readyPromise: Promise<void>
-  private pendingPermissions = new Map<string, { resolve: (allowed: boolean) => void }>()
+  private pendingPermissions = new Map<string, PendingPermissionInfo & { resolve: (allowed: boolean) => void }>()
+  private permissionListeners = new Set<(request: PendingPermissionInfo) => void>()
+  private permissionResolvedListeners = new Set<(request: ResolvedPermissionInfo) => void>()
   private pendingAskUser = new Map<string, { resolve: (answer: string) => void }>()
   private pendingPlanReviews = new Map<string, { resolve: (result: { approved: boolean; feedback?: string }) => void }>()
   private permissionModes = new Map<string, string>()
+  private assistantDrafts = new Map<string, string>()
   constructor() {
     const dbPath = path.join(getConfigDir(), 'history.db')
     this.history = new ConversationHistory(dbPath)
@@ -104,7 +120,17 @@ export class SessionManager {
   createSession(projectName: string, cwd: string): string {
     const sessionId = uuid()
     this.history.createSession(sessionId, projectName, cwd)
+    this.window?.webContents.send('session:changed', {
+      action: 'created',
+      sessionId,
+      projectName,
+      cwd,
+    })
     return sessionId
+  }
+
+  sessionExists(sessionId: string): boolean {
+    return this.history.listSessions().some(s => s.id === sessionId)
   }
 
   listAllProjects() {
@@ -221,8 +247,10 @@ export class SessionManager {
     const permissionCallback: PermissionCallback = (request) => {
       return new Promise<boolean>((resolve) => {
         const id = uuid()
-        this.pendingPermissions.set(id, { resolve })
-        this.window?.webContents.send('permission:request', { id, sessionId, toolName: request.toolName, input: request.input })
+        const payload = { id, sessionId, toolName: request.toolName, input: request.input, createdAt: new Date().toISOString(), assistantContext: this.assistantDrafts.get(sessionId)?.trim() || undefined }
+        this.pendingPermissions.set(id, { ...payload, resolve })
+        for (const listener of this.permissionListeners) listener(payload)
+        this.window?.webContents.send('permission:request', payload)
       })
     }
     const onPlanReview = async (planFile: string, content: string) => {
@@ -314,7 +342,7 @@ export class SessionManager {
     this.evaluateCodegraphState(meta.cwd)
   }
 
-  async sendMessage(sessionId: string, text: string, images?: { data: string; mediaType: string }[]): Promise<void> {
+  async sendMessage(sessionId: string, text: string, images?: { data: string; mediaType: string }[]): Promise<any | undefined> {
     // Ensure session is activated with latest model config
     if (!this.sessions.has(sessionId)) {
       await this.activateSession(sessionId)
@@ -344,8 +372,13 @@ export class SessionManager {
       }
     }
 
+    let completedMessage: any | undefined
+    this.assistantDrafts.set(sessionId, '')
     const events: SessionEvents = {
       onStreamChunk: (chunk: StreamChunk) => {
+        if (chunk.type === 'text_delta' && chunk.text) {
+          this.assistantDrafts.set(sessionId, `${this.assistantDrafts.get(sessionId) || ''}${chunk.text}`)
+        }
         this.window?.webContents.send('query:stream', { sessionId, chunk })
       },
       onToolEvent: (event: ToolExecutionEvent) => {
@@ -357,6 +390,7 @@ export class SessionManager {
         }
       },
       onMessageComplete: (message) => {
+        completedMessage = message
         this.window?.webContents.send('query:complete', { sessionId, message })
       },
       onError: (error) => {
@@ -421,10 +455,22 @@ export class SessionManager {
     try {
       await session.sendMessage(text, events, extraContent)
       this.window?.webContents.send('query:finished', { sessionId })
+      this.assistantDrafts.delete(sessionId)
+      return completedMessage
     } catch (err: any) {
       console.error('[SEND] Error:', err.message, err.stack)
       this.window?.webContents.send('query:error', { sessionId, error: err.message })
+      this.assistantDrafts.delete(sessionId)
+      return undefined
     }
+  }
+
+  getActiveProjectContext(): { projectName: string; cwd: string } {
+    const activeMeta = this.activeSessionId
+      ? this.history.listSessions().find(s => s.id === this.activeSessionId)
+      : null
+    if (activeMeta) return { projectName: activeMeta.projectName, cwd: activeMeta.cwd }
+    return { projectName: 'Chat Bridge', cwd: process.cwd() }
   }
 
   abortSession(sessionId: string): void {
@@ -447,7 +493,38 @@ export class SessionManager {
     if (pending) {
       pending.resolve(allowed)
       this.pendingPermissions.delete(id)
+      const { resolve: _resolve, ...info } = pending
+      const payload = { ...info, allowed }
+      for (const listener of this.permissionResolvedListeners) listener(payload)
+      this.window?.webContents.send('permission:resolved', payload)
     }
+  }
+
+  onPermissionRequest(listener: (request: PendingPermissionInfo) => void): () => void {
+    this.permissionListeners.add(listener)
+    return () => this.permissionListeners.delete(listener)
+  }
+
+  onPermissionResolved(listener: (request: ResolvedPermissionInfo) => void): () => void {
+    this.permissionResolvedListeners.add(listener)
+    return () => this.permissionResolvedListeners.delete(listener)
+  }
+
+  getLatestPendingPermission(sessionId: string): PendingPermissionInfo | null {
+    const pending = Array.from(this.pendingPermissions.values())
+      .filter(item => item.sessionId === sessionId)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    const latest = pending[0]
+    if (!latest) return null
+    const { resolve: _resolve, ...info } = latest
+    return info
+  }
+
+  respondToLatestPermission(sessionId: string, allowed: boolean): PendingPermissionInfo | null {
+    const latest = this.getLatestPendingPermission(sessionId)
+    if (!latest) return null
+    this.respondToPermission(latest.id, allowed)
+    return latest
   }
 
   respondToAskUser(id: string, answer: string): void {
@@ -469,10 +546,12 @@ export class SessionManager {
   deleteSession(sessionId: string): void {
     this.sessions.delete(sessionId)
     this.history.deleteSession(sessionId)
+    this.window?.webContents.send('session:changed', { action: 'deleted', sessionId })
   }
 
   renameSession(sessionId: string, title: string): void {
     this.history.updateSessionTitle(sessionId, title)
+    this.window?.webContents.send('session:changed', { action: 'renamed', sessionId, title })
   }
 
   getMessages(sessionId: string) {

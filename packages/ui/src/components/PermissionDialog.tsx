@@ -16,10 +16,18 @@ export function PermissionDialog({ sessionId }: Props) {
 
   useEffect(() => {
     if (!window.electronAPI) return
-    return window.electronAPI.on('permission:request', (_e: unknown, data: unknown) => {
+    const offRequest = window.electronAPI.on('permission:request', (_e: unknown, data: unknown) => {
       const req = data as PermissionRequest
       setRequest(req)
     })
+    const offResolved = window.electronAPI.on('permission:resolved', (_e: unknown, data: unknown) => {
+      const resolved = data as { id?: string }
+      setRequest(current => current?.id === resolved.id ? null : current)
+    })
+    return () => {
+      offRequest()
+      offResolved()
+    }
   }, [])
 
   if (!request || request.sessionId !== sessionId) return null
