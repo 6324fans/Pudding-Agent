@@ -79,6 +79,15 @@ export function SlashCommandMenu({ filter, visible, onSelect, onClose, skills = 
     return () => window.removeEventListener('keydown', handler, true)
   }, [visible, flatList, selectedIndex, onSelect, onClose])
 
+  useEffect(() => {
+    if (!visible) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [visible, onClose])
+
   if (!visible || flatList.length === 0) return null
 
   let currentIdx = 0

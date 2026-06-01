@@ -62,6 +62,10 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isComposingRef = useRef(false)
+  const queueRef = useRef<HTMLDivElement>(null)
+  const permRef = useRef<HTMLDivElement>(null)
+  const effortRef = useRef<HTMLDivElement>(null)
+  const modelRef = useRef<HTMLDivElement>(null)
 
   const messageQueue = useSessionStore((s) => s.messageQueue)
   const enqueueMessage = useSessionStore((s) => s.enqueueMessage)
@@ -240,6 +244,26 @@ export function Composer({
     handleInput()
   }, [activeSessionId])
 
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (queueExpanded && queueRef.current && !queueRef.current.contains(target)) {
+        setQueueExpanded(false)
+      }
+      if (showPermMenu && permRef.current && !permRef.current.contains(target)) {
+        setShowPermMenu(false)
+      }
+      if (showEffortMenu && effortRef.current && !effortRef.current.contains(target)) {
+        setShowEffortMenu(false)
+      }
+      if (showModelMenu && modelRef.current && !modelRef.current.contains(target)) {
+        setShowModelMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [queueExpanded, showPermMenu, showEffortMenu, showModelMenu])
+
   const handleClearQueue = () => {
     const len = messageQueue.length
     for (let i = len - 1; i >= 0; i--) removeFromQueue(i)
@@ -276,7 +300,7 @@ export function Composer({
     >
       {/* Queue chip */}
       {messageQueue.length > 0 && (
-        <div className="mb-2">
+        <div className="mb-2" ref={queueRef}>
           <button
             onClick={() => setQueueExpanded(!queueExpanded)}
             className="inline-flex items-center gap-2 rounded-[8px] bg-[var(--surface-3)] px-3 py-1.5 text-[12px] text-[var(--text)] transition-colors hover:opacity-80"
@@ -472,7 +496,7 @@ export function Composer({
         <div className="flex items-center justify-between text-[12px] min-w-0">
           <div className="flex items-center gap-3 min-w-0">
             {/* Permission dropdown */}
-            <div className="relative shrink-0">
+            <div className="relative shrink-0" ref={permRef}>
               <button
                 onClick={() => setShowPermMenu(!showPermMenu)}
                 className="flex items-center gap-1 text-[var(--text)] hover:opacity-80 transition-opacity whitespace-nowrap"
@@ -505,7 +529,7 @@ export function Composer({
             </div>
 
             {/* Effort dropdown */}
-            <div className="relative shrink-0">
+            <div className="relative shrink-0" ref={effortRef}>
               <button
                 onClick={() => setShowEffortMenu(!showEffortMenu)}
                 className={`flex items-center gap-1 transition-colors whitespace-nowrap ${effort === 'off' ? 'text-[var(--muted)] hover:text-[var(--text)]' : 'text-[var(--good)]'}`}
@@ -582,7 +606,7 @@ export function Composer({
             </div>
 
             {/* Model dropdown */}
-            <div className="relative min-w-0 shrink">
+            <div className="relative min-w-0 shrink" ref={modelRef}>
               <button
                 onClick={() => {
                   if (models && models.length > 0) setShowModelMenu(!showModelMenu)
