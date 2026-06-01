@@ -19,8 +19,10 @@ export interface SkillListItem {
   name: string
   description: string
   argumentHint?: string
+  userInvocable?: boolean
   source?: 'global' | 'project'
   filePath?: string
+  entryType?: 'file' | 'directory'
 }
 
 export interface PluginMarketplace {
@@ -172,6 +174,9 @@ declare global {
       pluginsUninstall: (id: string) => Promise<InstalledPlugin[]>
       pluginsSetEnabled: (id: string, enabled: boolean) => Promise<InstalledPlugin[]>
       listSkills: (sessionId: string) => Promise<SkillListItem[]>
+      deleteSkill?: (sessionId: string, filePath: string) => Promise<{ success: boolean }>
+      setSkillInvocable?: (sessionId: string, filePath: string, userInvocable: boolean) => Promise<{ success: boolean }>
+      onSkillsChanged?: (callback: (payload: { sessionId: string }) => void) => () => void
       onSessionChanged?: (callback: (payload: SessionChangedPayload) => void) => () => void
       agentAbort?: (sessionId: string, agentToolUseId: string) => Promise<void>
       // Apps

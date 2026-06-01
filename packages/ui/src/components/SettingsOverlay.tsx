@@ -4,7 +4,7 @@ import { useSettingsStore, type SettingsTab } from '../stores/settings-store'
 import { useModelStore, type ApiProtocol, type ModelGroup } from '../stores/model-store'
 import { useSessionStore } from '../stores/session-store'
 import { ThemeSegmented } from './ThemeSegmented'
-import { IconX } from './icons'
+import { IconCheck, IconStop, IconX } from './icons'
 import { useCodegraph } from '../hooks/useCodegraph'
 import { ipc, type ChatBridgeEvent, type ChatBridgeRouteState, type ChatBridgeSnapshot, type ChatChannelConfig, type ChatChannelState, type MarketplacePlugin, type McpServerState, type PluginMarketplace, type SkillListItem } from '../lib/ipc-client'
 
@@ -1948,6 +1948,7 @@ function SkillsTab() {
   const [skills, setSkills] = useState<SkillListItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [busySkill, setBusySkill] = useState<string | null>(null)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
 
   const loadSkills = useCallback(async () => {
@@ -1970,6 +1971,36 @@ function SkillsTab() {
   useEffect(() => {
     loadSkills()
   }, [loadSkills])
+
+  const setSkillInvocable = useCallback(async (skill: SkillListItem, userInvocable: boolean) => {
+    if (!activeSessionId || !skill.filePath || !window.electronAPI?.setSkillInvocable) return
+    setBusySkill(skill.filePath)
+    setError('')
+    try {
+      await window.electronAPI.setSkillInvocable(activeSessionId, skill.filePath, userInvocable)
+      await loadSkills()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新技能状态失败')
+    } finally {
+      setBusySkill(null)
+    }
+  }, [activeSessionId, loadSkills])
+
+  const deleteSkill = useCallback(async (skill: SkillListItem) => {
+    if (!activeSessionId || !skill.filePath || !window.electronAPI?.deleteSkill) return
+    const ok = window.confirm(`删除技能 /${skill.name}？此操作会删除对应的${skill.entryType === 'directory' ? '目录' : '文件'}。`)
+    if (!ok) return
+    setBusySkill(skill.filePath)
+    setError('')
+    try {
+      await window.electronAPI.deleteSkill(activeSessionId, skill.filePath)
+      await loadSkills()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除技能失败')
+    } finally {
+      setBusySkill(null)
+    }
+  }, [activeSessionId, loadSkills])
 
   return (
     <div className="space-y-3">
@@ -2002,6 +2033,10 @@ function SkillsTab() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-[13px] text-[var(--text)]">/{skill.name}</span>
+                <span className={`inline-flex items-center gap-1 text-[10px] border rounded px-1.5 py-0.5 ${skill.userInvocable !== false ? 'text-[var(--good)] border-[var(--good)]/40' : 'text-[var(--muted)] border-[var(--border)]'}`}>
+                  {skill.userInvocable !== false ? <IconCheck size={11} /> : <IconStop size={11} />}
+                  {skill.userInvocable !== false ? '起效' : '不起效'}
+                </span>
                 {skill.source && (
                   <span className="text-[10px] text-[var(--muted)] border border-[var(--border)] rounded px-1.5 py-0.5">
                     {skill.source === 'project' ? '项目' : '全局'}
@@ -2011,6 +2046,26 @@ function SkillsTab() {
               {skill.description && <p className="mt-1 text-[12px] text-[var(--muted)]">{skill.description}</p>}
               {skill.argumentHint && <p className="mt-1 font-mono text-[11px] text-[var(--muted)]">{skill.argumentHint}</p>}
             </div>
+            {skill.filePath && (
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSkillInvocable(skill, skill.userInvocable === false)}
+                  disabled={busySkill === skill.filePath}
+                  className="text-[12px] text-[var(--muted)] hover:text-[var(--text)] disabled:opacity-50"
+                >
+                  {skill.userInvocable === false ? '起效' : '不起效'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteSkill(skill)}
+                  disabled={busySkill === skill.filePath}
+                  className="text-[12px] text-[var(--muted)] hover:text-[var(--bad)] disabled:opacity-50"
+                >
+                  删除
+                </button>
+              </div>
+            )}
           </div>
           {skill.filePath && (
             <div className="mt-2 truncate font-mono text-[11px] text-[var(--muted)]">{skill.filePath}</div>

@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import matter from 'gray-matter'
@@ -38,12 +38,12 @@ export class SkillLoader {
         continue
       }
 
-      const skill = await this.parseSkill(filePath, source)
+      const skill = await this.parseSkill(filePath, source, fullPath, st.isDirectory() ? 'directory' : 'file')
       if (skill) this.skills.set(skill.name, skill)
     }
   }
 
-  private async parseSkill(filePath: string, source: 'global' | 'project'): Promise<SkillDefinition | null> {
+  private async parseSkill(filePath: string, source: 'global' | 'project', entryPath: string, entryType: 'file' | 'directory'): Promise<SkillDefinition | null> {
     try {
       const raw = await readFile(filePath, 'utf-8')
       const { data, content } = matter(raw)
@@ -59,8 +59,34 @@ export class SkillLoader {
         allowedTools: data['allowed-tools'],
         source,
         filePath,
+        entryPath,
+        entryType,
       }
     } catch { return null }
+  }
+
+  async setInvocable(filePath: string, userInvocable: boolean): Promise<void> {
+    const skill = this.findByFilePath(filePath)
+    if (!skill) throw new Error('Skill not found')
+
+    const raw = await readFile(skill.filePath, 'utf-8')
+    const parsed = matter(raw)
+    parsed.data['user-invocable'] = userInvocable
+    await writeFile(skill.filePath, matter.stringify(parsed.content, parsed.data), 'utf-8')
+    skill.userInvocable = userInvocable
+  }
+
+  async delete(filePath: string): Promise<void> {
+    const skill = this.findByFilePath(filePath)
+    if (!skill) throw new Error('Skill not found')
+
+    await rm(skill.entryPath, { recursive: skill.entryType === 'directory', force: false })
+    this.skills.delete(skill.name)
+  }
+
+  private findByFilePath(filePath: string): SkillDefinition | undefined {
+    const target = path.resolve(filePath)
+    return this.getAll().find(s => path.resolve(s.filePath) === target)
   }
 
   get(name: string): SkillDefinition | undefined {

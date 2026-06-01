@@ -9,4 +9,6 @@ export interface SkillDefinition {
   allowedTools?: string[]
   source: 'global' | 'project'
   filePath: string
+  entryPath: string
+  entryType: 'file' | 'directory'
 }

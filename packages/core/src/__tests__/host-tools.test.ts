@@ -17,20 +17,21 @@ describe('host capability tools', () => {
   })
 
   it('skill_list reports empty skill state clearly', async () => {
-    const loader = { getAll: () => [] } as any
+    const loader = { getInvocable: () => [] } as any
     const tool = createSkillListTool(loader)
 
     const result = await tool.execute({}, { cwd: '/' })
 
     expect(result.isError).toBeUndefined()
-    expect(result.content).toContain('No skills are currently loaded')
+    expect(result.content).toContain('No invocable skills are currently loaded')
   })
 
   it('skill_list renders available skills', async () => {
     const loader = {
-      getAll: () => [{
+      getInvocable: () => [{
         name: 'weather-helper',
         description: 'Answer weather questions',
+        userInvocable: true,
         source: 'global',
         filePath: '/tmp/weather-helper/SKILL.md',
       }],

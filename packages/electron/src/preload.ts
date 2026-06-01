@@ -29,6 +29,14 @@ const api = {
   pluginsUninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', { id }),
   pluginsSetEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('plugins:set-enabled', { id, enabled }),
   listSkills: (sessionId: string) => ipcRenderer.invoke('skills:list', { sessionId }),
+  deleteSkill: (sessionId: string, filePath: string) => ipcRenderer.invoke('skills:delete', { sessionId, filePath }),
+  setSkillInvocable: (sessionId: string, filePath: string, userInvocable: boolean) =>
+    ipcRenderer.invoke('skills:set-invocable', { sessionId, filePath, userInvocable }),
+  onSkillsChanged: (callback: (data: { sessionId: string }) => void) => {
+    const listener = (_event: unknown, data: { sessionId: string }) => callback(data)
+    ipcRenderer.on('skills:changed', listener)
+    return () => { ipcRenderer.removeListener('skills:changed', listener) }
+  },
   onSessionChanged: (callback: (data: any) => void) => {
     const listener = (_event: unknown, data: any) => callback(data)
     ipcRenderer.on('session:changed', listener)

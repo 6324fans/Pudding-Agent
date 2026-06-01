@@ -12,11 +12,11 @@ export function createSkillListTool(loader: SkillLoader): ToolHandler {
       },
     },
     async execute(_input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
-      const skills = loader.getAll()
+      const skills = loader.getInvocable()
       if (skills.length === 0) {
         return {
           content:
-            'No skills are currently loaded. Skills can be installed globally in ~/.puddingagent/skills or per-project in <project>/.puddingagent/skills. Create a markdown file or a directory containing SKILL.md.',
+            'No invocable skills are currently loaded. Skills can be installed globally in ~/.puddingagent/skills or per-project in <project>/.puddingagent/skills. Create a markdown file or a directory containing SKILL.md.',
         }
       }
 

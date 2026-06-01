@@ -137,7 +137,12 @@ export function ChatView({ onOpenMcp }: ChatViewProps) {
 
   useEffect(() => {
     if (activeSessionId && (window as any).electronAPI?.listSkills) {
-      (window as any).electronAPI.listSkills(activeSessionId).then(setSkills).catch(() => {})
+      ;(window as any).electronAPI
+        .listSkills(activeSessionId)
+        .then((items: { name: string; description: string; userInvocable?: boolean }[]) => {
+          setSkills(items.filter((skill) => skill.userInvocable !== false))
+        })
+        .catch(() => {})
     }
     // Sync permission mode to backend on session activation
     if (activeSessionId && (window as any).electronAPI?.setPermissionMode) {
@@ -147,6 +152,20 @@ export function ChatView({ onOpenMcp }: ChatViewProps) {
     if (activeSessionId && (window as any).electronAPI?.setEffort) {
       (window as any).electronAPI.setEffort(activeSessionId, effort === 'off' ? undefined : effort)
     }
+  }, [activeSessionId])
+
+  useEffect(() => {
+    const api = (window as any).electronAPI
+    if (!activeSessionId || !api?.onSkillsChanged || !api?.listSkills) return
+    return api.onSkillsChanged((payload: { sessionId: string }) => {
+      if (payload.sessionId !== activeSessionId) return
+      api
+        .listSkills(activeSessionId)
+        .then((items: { name: string; description: string; userInvocable?: boolean }[]) => {
+          setSkills(items.filter((skill) => skill.userInvocable !== false))
+        })
+        .catch(() => {})
+    })
   }, [activeSessionId])
 
   useEffect(() => {

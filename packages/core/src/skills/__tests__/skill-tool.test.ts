@@ -22,6 +22,14 @@ arguments:
 
 Hello \${1}! Welcome aboard.
 `)
+    await writeFile(path.join(skillsDir, 'quiet.md'), `---
+name: quiet
+description: Disabled skill
+user-invocable: false
+---
+
+Hidden.
+`)
     loader = new SkillLoader()
     await loader.loadAll(tmpDir)
   })
@@ -58,5 +66,13 @@ Hello \${1}! Welcome aboard.
     const result = await tool.execute({ skill: 'missing' }, { cwd: '/tmp' })
     expect(result.isError).toBe(true)
     expect(result.content).toContain('greet')
+    expect(result.content).not.toContain('quiet')
+  })
+
+  it('rejects disabled skills', async () => {
+    const tool = createSkillTool(loader)
+    const result = await tool.execute({ skill: 'quiet' }, { cwd: '/tmp' })
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Unknown skill')
   })
 })

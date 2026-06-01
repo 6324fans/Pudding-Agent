@@ -108,6 +108,16 @@ export function registerIpcHandlers(sessionManager: SessionManager, services: De
     return sessionManager.getSkills(sessionId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.SKILLS_DELETE, async (_event, { sessionId, filePath }) => {
+    await sessionManager.deleteSkill(sessionId, filePath)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SKILLS_SET_INVOCABLE, async (_event, { sessionId, filePath, userInvocable }) => {
+    await sessionManager.setSkillInvocable(sessionId, filePath, Boolean(userInvocable))
+    return { success: true }
+  })
+
   ipcMain.handle(IPC_CHANNELS.SESSION_SET_PERMISSION, async (_event, { sessionId, mode }) => {
     sessionManager.setPermissionMode(sessionId, mode)
     return { success: true }

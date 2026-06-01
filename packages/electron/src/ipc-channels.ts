@@ -31,6 +31,8 @@ export const IPC_CHANNELS = {
   CODEGRAPH_DISMISS: 'codegraph:dismiss',
   CODEGRAPH_STATE: 'codegraph:state',
   SKILLS_LIST: 'skills:list',
+  SKILLS_DELETE: 'skills:delete',
+  SKILLS_SET_INVOCABLE: 'skills:set-invocable',
   SESSION_SET_PERMISSION: 'session:set-permission-mode',
   SESSION_COMPACT: 'session:compact',
   SESSION_CLEAR: 'session:clear',

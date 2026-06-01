@@ -671,23 +671,46 @@ export class SessionManager {
     }
   }
 
-  async getSkills(sessionId: string): Promise<{ name: string; description: string; argumentHint?: string; source: 'global' | 'project'; filePath: string }[]> {
-    if (!this.sessions.has(sessionId)) {
-      try { await this.activateSession(sessionId) } catch { return [] }
-    }
-    const session = this.sessions.get(sessionId)
+  async getSkills(sessionId: string): Promise<{ name: string; description: string; argumentHint?: string; userInvocable: boolean; source: 'global' | 'project'; filePath: string; entryType: 'file' | 'directory' }[]> {
+    const session = await this.getSessionForSkillAction(sessionId)
     if (!session) return []
-    await session.ensureSkillsReady()
-    await session.reloadSkills()
     const loader = session.getSkillLoader()
-    if (!loader) return []
-    return loader.getInvocable().map(s => ({
+    return loader.getAll().map(s => ({
       name: s.name,
       description: s.description,
       argumentHint: s.argumentHint,
+      userInvocable: s.userInvocable,
       source: s.source,
       filePath: s.filePath,
+      entryType: s.entryType,
     }))
+  }
+
+  async deleteSkill(sessionId: string, filePath: string): Promise<void> {
+    const session = await this.getSessionForSkillAction(sessionId)
+    if (!session) throw new Error('Session not found')
+    await session.getSkillLoader().delete(filePath)
+    await session.reloadSkills()
+    this.window?.webContents.send('skills:changed', { sessionId })
+  }
+
+  async setSkillInvocable(sessionId: string, filePath: string, userInvocable: boolean): Promise<void> {
+    const session = await this.getSessionForSkillAction(sessionId)
+    if (!session) throw new Error('Session not found')
+    await session.getSkillLoader().setInvocable(filePath, userInvocable)
+    await session.reloadSkills()
+    this.window?.webContents.send('skills:changed', { sessionId })
+  }
+
+  private async getSessionForSkillAction(sessionId: string): Promise<Session | null> {
+    if (!this.sessions.has(sessionId)) {
+      try { await this.activateSession(sessionId) } catch { return null }
+    }
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+    await session.ensureSkillsReady()
+    await session.reloadSkills()
+    return session
   }
 
   setPermissionMode(sessionId: string, mode: string): void {

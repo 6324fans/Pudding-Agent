@@ -27,8 +27,8 @@ export function createSkillTool(loader: SkillLoader): ToolHandler {
       const name = input.skill as string
       const args = input.args as string | undefined
       const skill = loader.get(name)
-      if (!skill) {
-        const available = loader.getAll().map(s => s.name).join(', ')
+      if (!skill || !skill.userInvocable) {
+        const available = loader.getInvocable().map(s => s.name).join(', ')
         return { content: `Unknown skill: "${name}". Available skills: ${available || 'none'}`, isError: true }
       }
       const rendered = renderSkill(skill, args)
