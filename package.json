@@ -1,9 +1,9 @@
 {
   "name": "pudding-agent",
   "version": "1.0.8",
-  "description": "Open source AI coding assistant desktop app",
+  "description": "Source-available AI coding assistant desktop app",
   "private": true,
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/6324fans/Pudding-Agent.git"
