@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/electron-33-47848F?style=flat-square&logo=electron" alt="Electron">
   <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react" alt="React">
-  <img src="https://img.shields.io/badge/license-personal%20use-green?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
 </p>
 
 <p align="center">
@@ -415,7 +415,7 @@ packages/
 
 ## License
 
-For learning and personal use only. Commercial use prohibited. See [LICENSE](./LICENSE).
+Pudding-Agent is open source software released under the [MIT License](./LICENSE).
 
 ---
 

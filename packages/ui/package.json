@@ -2,6 +2,12 @@
   "name": "@puddingagent/ui",
   "version": "0.0.1",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/6324fans/Pudding-Agent.git",
+    "directory": "packages/ui"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

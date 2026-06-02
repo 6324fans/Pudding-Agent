@@ -4,9 +4,11 @@
   "description": "Bidirectional communication between Pudding-Agent and VS Code",
   "version": "0.2.0",
   "publisher": "puddingagent",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/6324fans/Pudding-Agent"
+    "url": "https://github.com/6324fans/Pudding-Agent.git",
+    "directory": "packages/vscode-extension"
   },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],

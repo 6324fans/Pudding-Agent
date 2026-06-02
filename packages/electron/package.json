@@ -4,6 +4,12 @@
   "description": "Pudding-Agent - AI-powered coding assistant desktop app",
   "author": "Pudding-Agent Team",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/6324fans/Pudding-Agent.git",
+    "directory": "packages/electron"
+  },
   "type": "commonjs",
   "main": "dist/main.js",
   "scripts": {

@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/electron-33-47848F?style=flat-square&logo=electron" alt="Electron">
   <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react" alt="React">
-  <img src="https://img.shields.io/badge/license-personal%20use-green?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
 </p>
 
 <p align="center">
@@ -384,7 +384,7 @@ packages/
 
 ## 许可证
 
-本项目仅供学习和个人使用，禁止商业用途。详见 [LICENSE](./LICENSE)。
+Pudding-Agent 是基于 [MIT License](./LICENSE) 发布的开源软件。
 
 ---
 
