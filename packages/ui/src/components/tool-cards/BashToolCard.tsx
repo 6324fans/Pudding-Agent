@@ -1,13 +1,12 @@
 import type { ToolCardRouterProps } from './ToolCardRouter'
 import { ToolCardShell } from './ToolCardShell'
 import { truncateText } from './shared'
-import { copyToClipboard } from '../../lib/clipboard'
+import { ToolCopyButton } from './ToolCopyButton'
+import { deriveToolStatus, getToolVariant, shouldShowToolRail } from './tool-card-meta'
 
-export function BashToolCard({ event, input, result }: ToolCardRouterProps) {
-  const status = event
-    ? (event.type === 'complete' ? 'done' : event.type === 'error' ? 'error' : 'running')
-    : (result?.is_error ? 'error' : 'done')
-
+export function BashToolCard({ event, input, result, name }: ToolCardRouterProps) {
+  const status = deriveToolStatus(event, result)
+  const toolName = event?.toolName || name || 'bash'
   const command = (event?.input?.command || input?.command || '') as string
   const output = event?.result?.content || result?.content || ''
   const isError = event?.result?.isError || result?.is_error
@@ -20,10 +19,12 @@ export function BashToolCard({ event, input, result }: ToolCardRouterProps) {
       detail={`$ ${displayCommand}`}
       status={status}
       defaultExpanded={status === 'running'}
+      rail={shouldShowToolRail(toolName, status)}
+      variant={getToolVariant(toolName)}
       actions={status === 'done' ? (
         <div className="flex items-center gap-1">
-          <button onClick={(e) => { e.stopPropagation(); copyToClipboard(command) }} className="px-1.5 py-0.5 rounded-[4px] text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-3)] transition-colors">复制命令</button>
-          {output && <button onClick={(e) => { e.stopPropagation(); copyToClipboard(output) }} className="px-1.5 py-0.5 rounded-[4px] text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-3)] transition-colors">复制输出</button>}
+          {command && <ToolCopyButton text={command} label="命令" title="复制命令" toastLabel="命令" />}
+          {output && <ToolCopyButton text={output} label="输出" title="复制输出" toastLabel="输出" />}
         </div>
       ) : undefined}
     >

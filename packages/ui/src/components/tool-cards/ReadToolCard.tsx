@@ -1,13 +1,11 @@
 import type { ToolCardRouterProps } from './ToolCardRouter'
 import { ToolCardShell } from './ToolCardShell'
-import { IconCopy } from '../icons'
-import { copyToClipboard } from '../../lib/clipboard'
+import { ToolCopyButton } from './ToolCopyButton'
+import { deriveToolStatus, getToolVariant, shouldShowToolRail } from './tool-card-meta'
 
-export function ReadToolCard({ event, input, result }: ToolCardRouterProps) {
-  const status = event
-    ? (event.type === 'complete' ? 'done' : event.type === 'error' ? 'error' : 'running')
-    : (result?.is_error ? 'error' : 'done')
-
+export function ReadToolCard({ event, input, result, name }: ToolCardRouterProps) {
+  const status = deriveToolStatus(event, result)
+  const toolName = event?.toolName || name || 'file_read'
   const toolInput = event?.input || input || {}
   const filePath = (toolInput.file_path || toolInput.path || '') as string
   const content = event?.result?.content || result?.content || ''
@@ -22,10 +20,10 @@ export function ReadToolCard({ event, input, result }: ToolCardRouterProps) {
       detail={detail}
       status={status}
       defaultExpanded={false}
-      actions={status === 'done' ? (
-        <button onClick={(e) => { e.stopPropagation(); copyToClipboard(filePath) }} className="p-1 rounded-[4px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-3)] transition-colors" aria-label="复制路径">
-          <IconCopy size={12} />
-        </button>
+      rail={shouldShowToolRail(toolName, status)}
+      variant={getToolVariant(toolName)}
+      actions={status === 'done' && filePath ? (
+        <ToolCopyButton text={filePath} label="路径" title="复制路径" toastLabel="路径" iconOnly />
       ) : undefined}
     >
       {isError && (

@@ -7,6 +7,10 @@ interface Props {
   status: 'running' | 'done' | 'error'
   defaultExpanded?: boolean
   collapsible?: boolean
+  className?: string
+  variant?: string
+  rail?: boolean
+  statusLabel?: string
   children?: ReactNode
   actions?: ReactNode
 }
@@ -23,6 +27,10 @@ export function ToolCardShell({
   status,
   defaultExpanded = false,
   collapsible = true,
+  className,
+  variant = 'generic',
+  rail = true,
+  statusLabel,
   children,
   actions,
 }: Props) {
@@ -53,9 +61,17 @@ export function ToolCardShell({
     }
   }
 
+  const cardClassName = ['pudding-event-card mb-2', className].filter(Boolean).join(' ')
+
   return (
-    <div className="pudding-event-card mb-2" data-status={status} data-expanded={showContent ? 'true' : 'false'}>
-      <div className="pudding-event-rail" aria-hidden="true" />
+    <div
+      className={cardClassName}
+      data-status={status}
+      data-expanded={showContent ? 'true' : 'false'}
+      data-rail={rail ? 'true' : 'false'}
+      data-variant={variant}
+    >
+      {rail && <div className="pudding-event-rail" aria-hidden="true" />}
       <div
         className={`pudding-event-card-header ${canToggle ? 'is-toggleable' : ''}`}
         onClick={toggle}
@@ -81,8 +97,8 @@ export function ToolCardShell({
         )}
         <span className="pudding-event-label">{label}</span>
         <span className="pudding-event-detail" title={detail}>{detail}</span>
-        <span className="pudding-event-chip">{cfg.label}</span>
-        {actions && <div className="flex items-center gap-1 flex-shrink-0">{actions}</div>}
+        <span className="pudding-event-chip">{statusLabel || cfg.label}</span>
+        {actions && <div className="pudding-event-actions">{actions}</div>}
       </div>
       {showContent && (
         <div className="pudding-event-content">

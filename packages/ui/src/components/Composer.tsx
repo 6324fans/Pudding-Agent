@@ -100,6 +100,12 @@ export function Composer({
     resetDraft()
     setAttachments([])
   }, [resetDraft])
+  const resetComposerHeight = useCallback(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.overflowY = 'hidden'
+  }, [])
 
   const activeProject = projects.find((p) => p.sessions.some((s) => s.id === activeSessionId))
   const cwd = activeProject?.cwd || ''
@@ -181,6 +187,7 @@ export function Composer({
       textareaRef.current?.focus()
     } else {
       resetComposer()
+      resetComposerHeight()
       onSlashCommand?.(`/${cmd.name}`)
     }
   }
@@ -195,14 +202,15 @@ export function Composer({
       if (images.length === 0) {
         enqueueMessage(finalText)
         resetComposer()
+        resetComposerHeight()
       }
       return
     }
 
     onSend(finalText, images.length > 0 ? images : undefined)
     resetComposer()
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'
-  }, [attachments, enqueueMessage, images, isStreaming, onSend, resetComposer, text])
+    resetComposerHeight()
+  }, [attachments, enqueueMessage, images, isStreaming, onSend, resetComposer, resetComposerHeight, text])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (isComposingRef.current) return
@@ -216,6 +224,7 @@ export function Composer({
       if (text.startsWith('/') && !text.includes(' ')) {
         onSlashCommand?.(text)
         resetComposer()
+        resetComposerHeight()
         setShowSlashMenu(false)
         return
       }

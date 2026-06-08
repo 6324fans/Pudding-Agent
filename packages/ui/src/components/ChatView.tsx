@@ -327,7 +327,8 @@ export function ChatView({ onOpenMcp }: ChatViewProps) {
               const paths = files.map((f: any) => f.filePath)
               const msg = `git add ${paths.join(' ')}`
               copyToClipboard(msg)
-              showToast(`已复制 ${files.length} 个文件到剪贴板`)
+                .then(() => showToast(`已复制 ${files.length} 个文件到剪贴板`))
+                .catch(() => showToast('复制失败', 'error'))
             }
           })
         }

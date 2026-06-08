@@ -1,12 +1,11 @@
 import type { ToolCardRouterProps } from './ToolCardRouter'
 import { ToolCardShell } from './ToolCardShell'
+import { ToolCopyButton } from './ToolCopyButton'
 import { parseMcpToolName } from './shared'
+import { deriveToolStatus, getToolVariant, shouldShowToolRail } from './tool-card-meta'
 
 export function McpToolCard({ event, input, result, name }: ToolCardRouterProps) {
-  const status = event
-    ? (event.type === 'complete' ? 'done' : event.type === 'error' ? 'error' : 'running')
-    : (result?.is_error ? 'error' : 'done')
-
+  const status = deriveToolStatus(event, result)
   const toolName = event?.toolName || name || ''
   const parsed = parseMcpToolName(toolName)
   const displayName = parsed ? `${parsed.server}::${parsed.tool}` : toolName
@@ -23,6 +22,11 @@ export function McpToolCard({ event, input, result, name }: ToolCardRouterProps)
       detail={displayName}
       status={status}
       defaultExpanded={status === 'running'}
+      rail={shouldShowToolRail(toolName, status)}
+      variant={getToolVariant(toolName)}
+      actions={content ? (
+        <ToolCopyButton text={content} label="结果" title="复制结果" iconOnly />
+      ) : undefined}
     >
       {inputEntries.length > 0 && (
         <div className="text-[12px] text-[var(--muted)] mb-2" style={{ fontFamily: 'var(--font-mono)' }}>
