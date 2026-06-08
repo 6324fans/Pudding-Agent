@@ -51,6 +51,25 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>
 }
 
+export interface ToolResultMetadata {
+  fileRead?: {
+    filePath: string
+    offset: number
+    limit: number
+    totalLines: number
+    content: string
+  }
+  mutations?: Array<{
+    filePath: string
+    kind: 'edit' | 'multi_edit' | 'write'
+  }>
+  command?: {
+    shell: 'bash' | 'powershell'
+    command: string
+    exitCode: number | null
+  }
+}
+
 export interface StreamChunk {
   type:
     | 'text_delta'

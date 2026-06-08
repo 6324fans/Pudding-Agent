@@ -50,12 +50,24 @@ Usage notes:
       const lines = content.split('\n')
       const effectiveLimit = limit === Infinity ? lines.length : limit
       const slice = lines.slice(offset, offset + effectiveLimit)
+      const returnedContent = slice.join('\n')
       const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
 
       // Record this read for future dedup checks
       context.fileReadState?.recordRead(filePath, offset, limit)
 
-      return { content: numbered }
+      return {
+        content: numbered,
+        metadata: {
+          fileRead: {
+            filePath,
+            offset,
+            limit,
+            totalLines: lines.length,
+            content: returnedContent,
+          },
+        },
+      }
     } catch (err: any) {
       if (err.code === 'ENOENT') {
         return { content: buildFileNotFoundError(filePath, context.cwd), isError: true }

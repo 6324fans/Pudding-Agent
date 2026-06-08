@@ -1,4 +1,4 @@
-import type { ToolDefinition } from './types.js'
+import type { ToolDefinition, ToolResultMetadata } from './types.js'
 
 export interface ToolHandler {
   definition: ToolDefinition
@@ -20,6 +20,7 @@ export interface ToolContext {
 export interface ToolResult {
   content: string
   isError?: boolean
+  metadata?: ToolResultMetadata
 }
 
 export class ToolRegistry {
