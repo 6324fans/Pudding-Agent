@@ -120,7 +120,7 @@ describe('ParallelExecutor', () => {
     expect(results[3]).toEqual({ tool_use_id: 'd', content: 'w-D', is_error: false })
   })
 
-  it('should abort remaining tools when one fails', async () => {
+  it('should let sibling reads finish before cancelling writes when one read fails', async () => {
     const registry = new ToolRegistry()
     const executed: string[] = []
 
@@ -131,9 +131,9 @@ describe('ParallelExecutor', () => {
           executed.push('fail')
           return { content: 'Error: not found', isError: true }
         }
-        // Slow read — should be cancelled
+        // Slow read should be allowed to finish so its result is not swallowed.
         await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { executed.push(`done-${input.id}`); resolve(undefined) }, 200)
+          const timer = setTimeout(() => { executed.push(`done-${input.id}`); resolve(undefined) }, 40)
           context.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('aborted')) })
         })
         return { content: `ok-${input.id}` }
@@ -157,14 +157,14 @@ describe('ParallelExecutor', () => {
       () => {}
     )
 
-    // The failing read should have aborted the slow read and the write
+    // The failing read should not abort sibling reads, but should cancel writes.
     expect(results[0].is_error).toBe(true)
     expect(results[0].content).toBe('Error: not found')
-    // Slow read was cancelled (either aborted or cancelled message)
-    expect(results[1].is_error).toBe(true)
+    expect(results[1]).toEqual({ tool_use_id: 'r2', content: 'ok-slow', is_error: false })
     // Write was never started
     expect(results[2].is_error).toBe(true)
     expect(results[2].content).toBe('Cancelled: sibling tool failed')
+    expect(executed).toContain('done-slow')
     expect(executed).not.toContain('write-X')
   })
 

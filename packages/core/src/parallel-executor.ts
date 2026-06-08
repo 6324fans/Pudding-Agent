@@ -106,6 +106,7 @@ export class ParallelExecutor {
     }
 
     // Execute reads in parallel
+    let readHadError = false
     if (readIndices.length > 0) {
       const semaphore = new Semaphore(MAX_CONCURRENCY)
       const readPromises = readIndices.map(async (idx) => {
@@ -127,13 +128,17 @@ export class ParallelExecutor {
           )
           results[idx] = { tool_use_id: raced.tool_use_id, content: raced.content, is_error: raced.is_error }
           if (raced.is_error && !raced.aborted) {
-            batchAbort.abort()
+            readHadError = true
           }
         } finally {
           semaphore.release()
         }
       })
       await Promise.all(readPromises)
+    }
+
+    if (readHadError) {
+      batchAbort.abort()
     }
 
     // Execute writes serially

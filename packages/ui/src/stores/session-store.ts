@@ -63,6 +63,19 @@ const EMPTY_STREAM_STATE: SessionStreamState = {
   toolEvents: [],
 }
 
+const TASK_MUTATION_TOOLS = new Set(['task_create', 'task_update', 'task_stop', 'todo_write'])
+
+function normalizeToolName(name?: string): string {
+  return (name || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase()
+}
+
+function shouldRefreshTasksForTool(event: ToolExecutionEvent): boolean {
+  return event.type === 'complete' && TASK_MUTATION_TOOLS.has(normalizeToolName(event.toolName))
+}
+
 interface SessionState {
   projects: ProjectGroup[]
   activeSessionId: string | null
@@ -363,6 +376,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         },
       }
     })
+
+    const current = get()
+    if (sessionId === current.activeSessionId && shouldRefreshTasksForTool(event)) {
+      void current.loadTasks(sessionId)
+    }
   },
 
   markStreaming: (sessionId: string, streaming: boolean) => {
