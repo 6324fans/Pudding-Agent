@@ -54,7 +54,7 @@ Usage notes:
       const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
 
       // Record this read for future dedup checks
-      context.fileReadState?.recordRead(filePath, offset, limit)
+      context.fileReadState?.recordRead(filePath, offset, limit, lines.length, returnedContent)
 
       return {
         content: numbered,

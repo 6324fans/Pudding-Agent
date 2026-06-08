@@ -12,6 +12,7 @@ export interface ToolContext {
   toolUseId?: string
   fileTracker?: import('./file-tracker.js').FileTracker
   fileReadState?: import('./file-read-state.js').FileReadStateCache
+  safetyRuntime?: import('./safety/policy-runtime.js').SafetyPolicyRuntime
   turnIndex?: number
   backgroundTasks?: import('./background-tasks.js').BackgroundTaskManager
   ideManager?: import('./ide/ide-manager.js').IdeManager

@@ -3,6 +3,8 @@ import { PermissionChecker } from './permissions.js'
 import type { HookEngine } from './hooks/engine.js'
 import type { FileTracker } from './file-tracker.js'
 import { isPlanModeToolAllowed } from './tools/enter-plan-mode.js'
+import { FileReadStateCache } from './file-read-state.js'
+import { SafetyPolicyRuntime } from './safety/policy-runtime.js'
 
 export interface ToolExecutionEvent {
   type: 'start' | 'progress' | 'complete' | 'error'
@@ -24,6 +26,7 @@ export class ToolRunner {
   private sessionId?: string
   fileTracker?: FileTracker
   fileReadState?: import('./file-read-state.js').FileReadStateCache
+  safetyRuntime?: SafetyPolicyRuntime
   backgroundTasks?: import('./background-tasks.js').BackgroundTaskManager
   turnIndex = 0
   planMode: 'normal' | 'planning' | 'awaiting_approval' = 'normal'
@@ -35,7 +38,8 @@ export class ToolRunner {
     permissionChecker?: PermissionChecker,
     onPermissionRequest?: PermissionCallback,
     hookEngine?: HookEngine,
-    sessionId?: string
+    sessionId?: string,
+    safetyRuntime?: SafetyPolicyRuntime
   ) {
     this.registry = registry
     this.cwd = cwd
@@ -43,6 +47,7 @@ export class ToolRunner {
     this.onPermissionRequest = onPermissionRequest
     this.hookEngine = hookEngine
     this.sessionId = sessionId
+    this.safetyRuntime = safetyRuntime ?? new SafetyPolicyRuntime({ cwd })
   }
 
   async execute(
@@ -105,6 +110,27 @@ export class ToolRunner {
 
     onEvent({ type: 'start', toolName, toolUseId, input })
 
+    const fileReadState = this.fileReadState ?? new FileReadStateCache()
+    this.fileReadState = fileReadState
+
+    if (this.safetyRuntime) {
+      const safetyDecision = this.safetyRuntime.preToolUse({
+        toolName,
+        toolUseId,
+        input,
+        cwd: this.cwd,
+        fileReadState,
+      })
+      if (safetyDecision.decision === 'block') {
+        const result: ToolResult = { content: `Blocked by safety policy: ${safetyDecision.reason}`, isError: true }
+        onEvent({ type: 'error', toolName, toolUseId, result })
+        return result
+      }
+      if (safetyDecision.warning) {
+        onEvent({ type: 'progress', toolName, toolUseId, message: `Safety warning: ${safetyDecision.warning}` })
+      }
+    }
+
     // PreToolUse hooks
     if (this.hookEngine) {
       const hookOutput = await this.hookEngine.runPreToolUse({
@@ -126,7 +152,8 @@ export class ToolRunner {
       signal,
       toolUseId,
       fileTracker: this.fileTracker,
-      fileReadState: this.fileReadState,
+      fileReadState,
+      safetyRuntime: this.safetyRuntime,
       turnIndex: this.turnIndex,
       backgroundTasks: this.backgroundTasks,
       onProgress: (message) => {
@@ -136,6 +163,15 @@ export class ToolRunner {
 
     try {
       const result = await handler.execute(input, context)
+
+      this.safetyRuntime?.postToolUse({
+        toolName,
+        toolUseId,
+        input,
+        cwd: this.cwd,
+        fileReadState,
+        result,
+      })
 
       // PostToolUse hooks
       if (this.hookEngine) {

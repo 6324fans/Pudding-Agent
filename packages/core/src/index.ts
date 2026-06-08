@@ -32,6 +32,35 @@ export { createAgentTool, type AgentToolDeps } from './tools/agent.js'
 export { UsageTracker, type UsageSnapshot, type TurnUsage } from './usage-tracker.js'
 export { FileTracker, type FileSnapshot, type FileChange } from './file-tracker.js'
 export { FileReadStateCache, type FileReadEntry } from './file-read-state.js'
+export {
+  SafetyPolicyRuntime,
+  type SafetyPolicyMode,
+  type SafetyPreToolDecision,
+} from './safety/policy-runtime.js'
+export {
+  PolicyEventLedger,
+  type PolicyEvent,
+  type PolicyEventDecision,
+  type PolicyEventPhase,
+  type PolicyEventSource,
+} from './safety/policy-events.js'
+export {
+  VerificationLedger,
+  type ChangedFileRecord,
+  type ChangedFileVerificationStatus,
+  type VerificationCommandRecord,
+  type VerificationCommandStatus,
+  type VerificationKind,
+  type VerificationRequirementRecord,
+} from './verification/verification-ledger.js'
+export {
+  deriveVerificationRequirements,
+  type VerificationRequirement,
+  type VerificationRequirementPlan,
+  type VerificationRequirementStatus,
+  type WorkspacePackageInfo,
+} from './verification/verification-requirements.js'
+export { classifyVerificationCommand } from './verification/tool-output-classifier.js'
 export { ParallelExecutor, type ToolUseBlock, type ToolBatchResult } from './parallel-executor.js'
 export { BackgroundTaskManager, type BackgroundTask, type TaskType } from './background-tasks.js'
 export { getNonInteractiveEnv } from './tools/bash.js'
