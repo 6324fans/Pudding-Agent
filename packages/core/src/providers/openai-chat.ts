@@ -3,6 +3,7 @@ import type { ModelProvider } from '../model-provider.js'
 import type { ContentBlock, Message, ModelConfig, PromptSegment, ReasoningEffort, StreamChunk, ToolDefinition } from '../types.js'
 import { joinSegments } from '../context.js'
 import { ThinkTagStreamParser } from './think-parser.js'
+import { withStreamRetry } from './stream-retry.js'
 import { getModelTraits } from './model-traits.js'
 
 function resolveSystemPrompt(systemPrompt?: string | PromptSegment[]): string | undefined {
@@ -116,7 +117,21 @@ export class OpenAIChatProvider implements ModelProvider {
     }
   }
 
-  async *stream(
+  stream(
+    messages: Message[],
+    tools: ToolDefinition[],
+    config: ModelConfig,
+    signal?: AbortSignal
+  ): AsyncIterable<StreamChunk> {
+    return withStreamRetry(
+      () => this.streamOnce(messages, tools, config, signal),
+      signal,
+      undefined,
+      config.onStreamRetry,
+    )
+  }
+
+  private async *streamOnce(
     messages: Message[],
     tools: ToolDefinition[],
     config: ModelConfig,

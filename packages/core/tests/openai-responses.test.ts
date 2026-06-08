@@ -1,7 +1,29 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { OpenAIResponsesProvider } from '../src/providers/openai-responses.js'
+import type { ModelConfig, StreamChunk } from '../src/types.js'
+
+const config: ModelConfig = {
+  model: 'test-model',
+  maxTokens: 1024,
+}
+
+async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[]> {
+  const chunks: StreamChunk[] = []
+  for await (const chunk of stream) chunks.push(chunk)
+  return chunks
+}
+
+function responseStream(events: any[]): AsyncIterable<any> {
+  return (async function* () {
+    for (const event of events) yield event
+  })()
+}
 
 describe('OpenAIResponsesProvider', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('implements ModelProvider interface', () => {
     const provider = new OpenAIResponsesProvider('test-key', 'http://localhost:8080')
     expect(provider.name).toBe('openai-responses')
@@ -21,22 +43,37 @@ describe('OpenAIResponsesProvider', () => {
     ])
   })
 
-  it('formats input with system prompt', () => {
+  it('passes system prompt as Responses instructions', async () => {
     const provider = new OpenAIResponsesProvider('test-key')
-    const formatted = (provider as any).formatInput(
+    ;(provider as any).client = {
+      responses: {
+        create: vi.fn(async (request) => ({
+          output: [],
+          usage: { input_tokens: 0, output_tokens: 0 },
+          request,
+        })),
+      },
+    }
+
+    await provider.chat(
       [{ id: '1', role: 'user', content: [{ type: 'text', text: 'hello' }], timestamp: 0 }],
-      'You are helpful.'
+      [],
+      { ...config, systemPrompt: 'You are helpful.' },
     )
-    expect(formatted[0]).toEqual({ role: 'system', content: 'You are helpful.' })
-    expect(formatted[1]).toEqual({ role: 'user', content: 'hello' })
+
+    expect((provider as any).client.responses.create).toHaveBeenCalledWith(
+      expect.objectContaining({ instructions: 'You are helpful.' }),
+      expect.any(Object),
+    )
   })
 
-  it('formats tool_result blocks as function_call_output', () => {
+  it('formats paired tool_result blocks as function_call_output', () => {
     const provider = new OpenAIResponsesProvider('test-key')
     const formatted = (provider as any).formatInput([
+      { id: '1', role: 'assistant', content: [{ type: 'tool_use', id: 'tc1', name: 'read', input: { path: 'file.txt' } }], timestamp: 0 },
       { id: '1', role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'file.txt' }], timestamp: 0 },
     ])
-    expect(formatted[0]).toEqual({
+    expect(formatted[1]).toEqual({
       type: 'function_call_output',
       call_id: 'tc1',
       output: 'file.txt',
@@ -88,6 +125,12 @@ describe('OpenAIResponsesProvider', () => {
     const provider = new OpenAIResponsesProvider('test-key')
     const formatted = (provider as any).formatInput([
       {
+        id: '0',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'tc1', name: 'read', input: { path: 'file.txt' } }],
+        timestamp: 0,
+      },
+      {
         id: '1',
         role: 'user',
         content: [
@@ -97,11 +140,76 @@ describe('OpenAIResponsesProvider', () => {
         timestamp: 0,
       },
     ])
-    expect(formatted[0]).toEqual({
+    expect(formatted[1]).toEqual({
       type: 'function_call_output',
       call_id: 'tc1',
       output: 'result',
     })
-    expect(formatted[1]).toEqual({ role: 'user', content: 'follow up' })
+    expect(formatted[2]).toEqual({ role: 'user', content: 'follow up' })
+  })
+
+  it('emits Responses function calls at item completion to preserve text order', async () => {
+    const provider = new OpenAIResponsesProvider('test-key')
+    ;(provider as any).client = {
+      responses: {
+        create: async () => responseStream([
+          { type: 'response.output_text.delta', delta: 'before ' },
+          {
+            type: 'response.output_item.added',
+            output_index: 1,
+            item: { type: 'function_call', id: 'item1', call_id: 'call1', name: 'bash', arguments: '' },
+          },
+          { type: 'response.function_call_arguments.delta', output_index: 1, item_id: 'item1', delta: '{"command":' },
+          { type: 'response.function_call_arguments.delta', output_index: 1, item_id: 'item1', delta: '"ls"}' },
+          { type: 'response.output_text.delta', delta: 'after' },
+          {
+            type: 'response.output_item.done',
+            output_index: 1,
+            item: { type: 'function_call', id: 'item1', call_id: 'call1', name: 'bash', arguments: '' },
+          },
+          {
+            type: 'response.completed',
+            response: { usage: { input_tokens: 3, output_tokens: 4 } },
+          },
+        ]),
+      },
+    }
+
+    const chunks = await collect(provider.stream([], [], config))
+
+    expect(chunks.map(chunk => chunk.type)).toEqual([
+      'text_delta',
+      'text_delta',
+      'tool_use_start',
+      'tool_use_delta',
+      'tool_use_end',
+      'message_end',
+    ])
+    const toolStartIndex = chunks.findIndex(chunk => chunk.type === 'tool_use_start')
+    expect(chunks.slice(0, toolStartIndex).map(chunk => chunk.text || '').join('')).toBe('before after')
+    expect(chunks[toolStartIndex].toolUse).toEqual({ id: 'call1', name: 'bash', input: '' })
+    expect(chunks[toolStartIndex + 1].toolUse?.input).toBe('{"command":"ls"}')
+  })
+
+  it('keeps non-streaming reasoning summaries as thinking blocks', async () => {
+    const provider = new OpenAIResponsesProvider('test-key')
+    ;(provider as any).client = {
+      responses: {
+        create: async () => ({
+          output: [
+            { type: 'reasoning', summary: [{ text: 'checked constraints' }] },
+            { type: 'message', content: [{ type: 'output_text', text: 'done' }] },
+          ],
+          usage: { input_tokens: 1, output_tokens: 2 },
+        }),
+      },
+    }
+
+    const result = await provider.chat([], [], config)
+
+    expect(result.content).toEqual([
+      { type: 'thinking', thinking: 'checked constraints' },
+      { type: 'text', text: 'done' },
+    ])
   })
 })

@@ -3,6 +3,7 @@ import type { ModelProvider } from '../model-provider.js'
 import type { ContentBlock, Message, ModelConfig, PromptSegment, ReasoningEffort, StreamChunk, ToolDefinition } from '../types.js'
 import { joinSegments } from '../context.js'
 import { ThinkTagStreamParser } from './think-parser.js'
+import { withStreamRetry } from './stream-retry.js'
 import { getModelTraits } from './model-traits.js'
 
 function resolveSystemPrompt(systemPrompt?: string | PromptSegment[]): string | undefined {
@@ -67,6 +68,7 @@ interface ResponsesMessageItem {
 
 interface ResponsesFunctionCallItem {
   type: 'function_call'
+  id?: string
   call_id: string
   name: string
   arguments: string
@@ -78,6 +80,15 @@ interface ResponsesReasoningItem {
 }
 
 type ResponsesOutputItem = ResponsesMessageItem | ResponsesFunctionCallItem | ResponsesReasoningItem
+
+interface PendingFunctionCall {
+  outputIndex: number
+  itemId?: string
+  callId?: string
+  name?: string
+  arguments: string
+  emitted: boolean
+}
 
 interface ResponsesResult {
   output: ResponsesOutputItem[]
@@ -158,7 +169,21 @@ export class OpenAIResponsesProvider implements ModelProvider {
     }
   }
 
-  async *stream(
+  stream(
+    messages: Message[],
+    tools: ToolDefinition[],
+    config: ModelConfig,
+    signal?: AbortSignal
+  ): AsyncIterable<StreamChunk> {
+    return withStreamRetry(
+      () => this.streamOnce(messages, tools, config, signal),
+      signal,
+      undefined,
+      config.onStreamRetry,
+    )
+  }
+
+  private async *streamOnce(
     messages: Message[],
     tools: ToolDefinition[],
     config: ModelConfig,
@@ -174,22 +199,70 @@ export class OpenAIResponsesProvider implements ModelProvider {
 
     const thinkParser = new ThinkTagStreamParser()
     let flushed = false
+    const pendingFunctionCallsByOutput = new Map<number, PendingFunctionCall>()
+    const pendingFunctionCallsByItem = new Map<string, PendingFunctionCall>()
+
+    const getPendingFunctionCall = (
+      event: { output_index?: number; item_id?: string },
+      item?: Partial<ResponsesFunctionCallItem>,
+    ): PendingFunctionCall => {
+      const outputIndex = typeof event.output_index === 'number' ? event.output_index : 0
+      let pending = event.item_id ? pendingFunctionCallsByItem.get(event.item_id) : undefined
+      if (!pending) pending = pendingFunctionCallsByOutput.get(outputIndex)
+      if (!pending) {
+        pending = { outputIndex, arguments: '', emitted: false }
+        pendingFunctionCallsByOutput.set(outputIndex, pending)
+      }
+      if (event.item_id) {
+        pending.itemId = event.item_id
+        pendingFunctionCallsByItem.set(event.item_id, pending)
+      }
+      if (item?.id) {
+        pending.itemId = item.id
+        pendingFunctionCallsByItem.set(item.id, pending)
+      }
+      if (item?.call_id) pending.callId = item.call_id
+      if (item?.name) pending.name = item.name
+      if (typeof item?.arguments === 'string' && item.arguments.length > 0) pending.arguments = item.arguments
+      return pending
+    }
+
+    const completedFunctionCallChunks = (
+      item: ResponsesFunctionCallItem,
+      event: { output_index?: number },
+    ): StreamChunk[] => {
+      const pending = getPendingFunctionCall(event, item)
+      if (pending.emitted) return []
+      const callId = item.call_id || pending.callId || item.id || pending.itemId || `function_call_${pending.outputIndex}`
+      const name = item.name || pending.name || ''
+      const args = item.arguments || pending.arguments || ''
+      if (!name) return []
+      pending.emitted = true
+      if (pending.itemId) pendingFunctionCallsByItem.delete(pending.itemId)
+      pendingFunctionCallsByOutput.delete(pending.outputIndex)
+      const chunks: StreamChunk[] = [
+        { type: 'tool_use_start', toolUse: { id: callId, name, input: '' } },
+      ]
+      if (args) chunks.push({ type: 'tool_use_delta', toolUse: { id: '', name: '', input: args } })
+      chunks.push({ type: 'tool_use_end' })
+      return chunks
+    }
 
     for await (const event of stream) {
       if (event.type === 'response.output_text.delta') {
         for (const c of thinkParser.writeText(event.delta)) yield c
       } else if (event.type === 'response.output_item.added' && event.item?.type === 'function_call') {
-        yield {
-          type: 'tool_use_start',
-          toolUse: { id: event.item.call_id || '', name: event.item.name || '', input: '' },
-        }
+        getPendingFunctionCall(event, event.item)
       } else if (event.type === 'response.function_call_arguments.delta') {
-        yield {
-          type: 'tool_use_delta',
-          toolUse: { id: '', name: '', input: event.delta },
-        }
+        const pending = getPendingFunctionCall(event)
+        pending.arguments += event.delta || ''
+      } else if (event.type === 'response.function_call_arguments.done') {
+        const pending = getPendingFunctionCall(event)
+        pending.arguments = event.arguments || pending.arguments
+        if (event.name) pending.name = event.name
       } else if (event.type === 'response.output_item.done' && event.item?.type === 'function_call') {
-        yield { type: 'tool_use_end' }
+        for (const c of thinkParser.flush()) yield c
+        for (const c of completedFunctionCallChunks(event.item, event)) yield c
       } else if (event.type === 'response.reasoning_summary_text.delta' || event.type === 'response.reasoning_text.delta') {
         if (event.delta) {
           for (const c of thinkParser.writeThinking(event.delta)) yield c
@@ -283,8 +356,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
         continue
       }
 
-      // User text messages
-      if (textBlocks.length > 0 && toolResultBlocks.length === 0) {
+      // User text messages. Keep trailing text in tool-result turns.
+      if (textBlocks.length > 0) {
         const text = textBlocks
           .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
           .map(b => b.text)

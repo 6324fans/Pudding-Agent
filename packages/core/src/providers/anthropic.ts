@@ -3,6 +3,7 @@ import type { ModelProvider } from '../model-provider.js'
 import type { ContentBlock, Message, ModelConfig, PromptSegment, ReasoningEffort, StreamChunk, ToolDefinition } from '../types.js'
 import { joinSegments } from '../context.js'
 import { ThinkTagStreamParser } from './think-parser.js'
+import { withStreamRetry } from './stream-retry.js'
 
 function resolveSystemPrompt(systemPrompt?: string | PromptSegment[]): any {
   if (!systemPrompt) return undefined
@@ -146,7 +147,12 @@ export class AnthropicProvider implements ModelProvider {
 
     applyEffort(params, config)
 
-    yield* this.streamRaw(params, signal)
+    yield* withStreamRetry(
+      () => this.streamRaw(params, signal),
+      signal,
+      undefined,
+      config.onStreamRetry,
+    )
   }
 
   private async *streamSDK(params: any, signal?: AbortSignal): AsyncIterable<StreamChunk> {

@@ -138,6 +138,16 @@ export interface ModelConfig {
    * and helps with abuse signals. Usually the session id.
    */
   cacheUser?: string
+  /**
+   * Progress hook for provider-level stream retries. Providers call this only
+   * while retrying is still protocol-safe: before any chunk has been yielded.
+   */
+  onStreamRetry?: (
+    attempt: number,
+    error: Error,
+    delayMs: number,
+    maxRetries: number,
+  ) => void
 }
 
 export interface SessionConfig {

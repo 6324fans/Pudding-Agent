@@ -743,6 +743,9 @@ export class Session {
             ...this.config.modelConfig,
             cacheKey: this.config.modelConfig.cacheKey ?? `main:${this.id}`,
             cacheUser: this.config.modelConfig.cacheUser ?? this.id,
+            onStreamRetry: (attempt, error, delayMs) => {
+              events.onRetrying?.(attempt, error, delayMs, classifyError(error))
+            },
           }
           const stream = this.provider.stream(
             this.messages,
@@ -797,6 +800,12 @@ export class Session {
           if (this.abortController?.signal.aborted) break
 
           const category = classifyError(streamErr)
+
+          if (assistantContent.length > 0) {
+            console.error('[STREAM ERROR]', streamErr.message)
+            events.onError(streamErr)
+            return
+          }
 
           if (category === 'prompt_too_long') {
             await this.compactNow(events)
