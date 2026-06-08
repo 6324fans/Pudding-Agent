@@ -412,8 +412,13 @@ export function ChatView({ onOpenMcp }: ChatViewProps) {
                 category={error.category}
                 retrying={error.retrying}
                 retryAttempt={error.retryAttempt}
+                retryMaxRetries={error.retryMaxRetries}
                 retryIn={error.retryIn}
                 onRetry={retry}
+                onCancel={() => {
+                  abort()
+                  dismissError()
+                }}
                 onDismiss={dismissError}
               />
             )}

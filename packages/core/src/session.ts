@@ -52,8 +52,9 @@ export interface SessionEvents {
   onStreamChunk: (chunk: StreamChunk) => void
   onToolEvent: (event: ToolExecutionEvent) => void
   onMessageComplete: (message: Message) => void
+  onMessagesReplaced?: (messages: Message[]) => void
   onError: (error: Error) => void
-  onRetrying?: (attempt: number, error: Error, delayMs: number, category: string) => void
+  onRetrying?: (attempt: number, error: Error, delayMs: number, category: string, maxRetries?: number) => void
   onUsage?: (snapshot: UsageSnapshot) => void
   onAgentProgress?: (agentToolUseId: string, event: { toolName: string; toolStatus: 'start' | 'complete' | 'error'; toolInput?: Record<string, unknown>; toolResult?: { content: string; isError?: boolean }; toolCount: number }) => void
   onAgentText?: (agentToolUseId: string, text: string) => void
@@ -574,6 +575,42 @@ export class Session {
     await this.runLoop(events)
   }
 
+  async retryLastTurn(events: SessionEvents): Promise<void> {
+    await this.ensureHooksReady()
+    await this.ensureSkillsReady()
+    this.syncMcpTools()
+
+    if (this.abortController) {
+      events.onError(new Error('Cannot retry while a response is still running.'))
+      return
+    }
+
+    const retryFrom = this.findLastRetryableUserMessageIndex()
+    if (retryFrom === -1) {
+      events.onError(new Error('No user message is available to retry.'))
+      return
+    }
+
+    const nextMessages = this.messages.slice(0, retryFrom + 1)
+    if (nextMessages.length !== this.messages.length) {
+      this.messages = nextMessages
+      this.history.replaceMessages(this.id, this.messages)
+      events.onMessagesReplaced?.(this.getMessages())
+    }
+
+    await this.runLoop(events)
+  }
+
+  private findLastRetryableUserMessageIndex(): number {
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const message = this.messages[index]
+      if (message.role !== 'user') continue
+      if (message.content.every((block) => block.type === 'tool_result')) continue
+      return index
+    }
+    return -1
+  }
+
   private shouldCompact(): boolean {
     const compressAt = this.config.modelConfig.compressAt || 0.9
     if (this.usageTracker.shouldCompact(compressAt)) return true
@@ -753,8 +790,8 @@ export class Session {
             ...this.config.modelConfig,
             cacheKey: this.config.modelConfig.cacheKey ?? `main:${this.id}`,
             cacheUser: this.config.modelConfig.cacheUser ?? this.id,
-            onStreamRetry: (attempt, error, delayMs) => {
-              events.onRetrying?.(attempt, error, delayMs, classifyError(error))
+            onStreamRetry: (attempt, error, delayMs, maxRetries) => {
+              events.onRetrying?.(attempt, error, delayMs, classifyError(error), maxRetries)
             },
           }
           const stream = this.provider.stream(
@@ -814,6 +851,8 @@ export class Session {
           if (assistantContent.length > 0) {
             console.error('[STREAM ERROR]', streamErr.message)
             events.onError(streamErr)
+            this.abortController = null
+            this.currentEvents = undefined
             return
           }
 
@@ -842,11 +881,13 @@ export class Session {
             }
             console.error('[STREAM ERROR]', streamErr.message)
             events.onError(streamErr)
+            this.abortController = null
+            this.currentEvents = undefined
             return
           }
 
           const delay = getRetryDelay(retryCount, category, streamErr)
-          events.onRetrying?.(retryCount + 1, streamErr, delay, category)
+          events.onRetrying?.(retryCount + 1, streamErr, delay, category, maxForCategory)
           retryCount++
           // Drop partial chunks before retrying — provider will replay from the
           // start of the assistant turn.

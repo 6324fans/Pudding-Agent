@@ -5,8 +5,10 @@ interface Props {
   category: string
   retrying: boolean
   retryAttempt?: number
+  retryMaxRetries?: number
   retryIn?: number
   onRetry: () => void
+  onCancel?: () => void
   onDismiss: () => void
 }
 
@@ -19,7 +21,7 @@ const categoryLabels: Record<string, string> = {
   unknown: '错误',
 }
 
-export function ErrorCard({ message, category, retrying, retryAttempt, retryIn, onRetry, onDismiss }: Props) {
+export function ErrorCard({ message, category, retrying, retryAttempt, retryMaxRetries, retryIn, onRetry, onCancel, onDismiss }: Props) {
   const [countdown, setCountdown] = useState(retryIn ? Math.ceil(retryIn / 1000) : 0)
 
   useEffect(() => {
@@ -34,18 +36,33 @@ export function ErrorCard({ message, category, retrying, retryAttempt, retryIn, 
     return () => clearInterval(interval)
   }, [retrying, retryIn])
 
+  const retryProgress = retryAttempt
+    ? retryMaxRetries
+      ? `${retryAttempt}/${retryMaxRetries}`
+      : `#${retryAttempt}`
+    : null
+
   return (
     <div className="mb-3 border border-[var(--border)] bg-[var(--surface-2)] border-l-4 border-l-[var(--bad)] rounded-[8px]">
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.1em]">
           <span className="inline-block h-2 w-2 rounded-full bg-[var(--bad)]" />
           <span className="text-[var(--bad)]">{categoryLabels[category] || '错误'}</span>
-          {retrying && retryAttempt && (
-            <span className="text-[var(--muted)]">第 {retryAttempt} 次重试{countdown > 0 ? `，${countdown}s 后` : '...'}</span>
+          {retrying && retryProgress && (
+            <span className="text-[var(--muted)]">重试 {retryProgress}{countdown > 0 ? `，${countdown}s 后` : '，正在重试'}</span>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {!retrying && (
+          {retrying ? (
+            onCancel && (
+              <button
+                onClick={onCancel}
+                className="text-[12px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+              >
+                取消
+              </button>
+            )
+          ) : (
             <button
               onClick={onRetry}
               className="text-[12px] text-[var(--good)] hover:opacity-80 transition-colors"
@@ -53,12 +70,14 @@ export function ErrorCard({ message, category, retrying, retryAttempt, retryIn, 
               重试
             </button>
           )}
-          <button
-            onClick={onDismiss}
-            className="text-[12px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            忽略
-          </button>
+          {!retrying && (
+            <button
+              onClick={onDismiss}
+              className="text-[12px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+            >
+              忽略
+            </button>
+          )}
         </div>
       </div>
       <div className="border-t border-[var(--border)] px-3 py-2">

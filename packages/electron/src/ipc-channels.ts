@@ -6,6 +6,7 @@ export const IPC_CHANNELS = {
   SESSION_DELETE: 'session:delete',
   SESSION_CHANGED: 'session:changed',
   QUERY_SEND: 'query:send',
+  QUERY_RETRY: 'query:retry',
   QUERY_ABORT: 'query:abort',
   QUERY_STREAM: 'query:stream',
   QUERY_TOOL_EVENT: 'query:tool-event',

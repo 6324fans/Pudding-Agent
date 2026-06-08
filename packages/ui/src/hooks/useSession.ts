@@ -18,6 +18,9 @@ export function useSession() {
     const store = useSessionStore.getState()
 
     const unsubStream = ipc.query.onStream(({ sessionId, chunk }) => {
+      if (store.getSessionState(sessionId).error?.retrying) {
+        store.setError(sessionId, null)
+      }
       if (chunk.type === 'thinking_delta' && chunk.text) {
         store.appendThinkingText(sessionId, chunk.text)
       } else if (chunk.type === 'text_delta' && chunk.text) {
@@ -91,6 +94,9 @@ export function useSession() {
     })
 
     const unsubComplete = ipc.query.onComplete(({ sessionId, message }) => {
+      if (store.getSessionState(sessionId).error?.retrying) {
+        store.setError(sessionId, null)
+      }
       const current = useSessionStore.getState()
       if (sessionId === current.activeSessionId) {
         useSessionStore.setState((s) => ({ messages: [...s.messages, message] }))
@@ -136,8 +142,8 @@ export function useSession() {
       store.setError(sessionId, { message: error, category: 'unknown', retrying: false })
     })
 
-    const unsubRetrying = ipc.query.onRetrying(({ sessionId, attempt, error, delayMs, category }) => {
-      store.setError(sessionId, { message: error, category, retrying: true, retryAttempt: attempt, retryIn: delayMs })
+    const unsubRetrying = ipc.query.onRetrying(({ sessionId, attempt, maxRetries, error, delayMs, category }) => {
+      store.setError(sessionId, { message: error, category, retrying: true, retryAttempt: attempt, retryMaxRetries: maxRetries, retryIn: delayMs })
     })
 
     const unsubMessagesUpdated = window.electronAPI?.on('session:messages-updated', (_e: unknown, data: unknown) => {
@@ -226,15 +232,10 @@ export function useSession() {
     retry: useCallback(() => {
       if (!activeSessionId) return
       useSessionStore.getState().setError(activeSessionId, null)
-      const msgs = useSessionStore.getState().messages
-      const lastUser = [...msgs].reverse().find(m => m.role === 'user')
-      if (lastUser) {
-        const textBlock = lastUser.content.find((b: any) => b.type === 'text') as any
-        if (textBlock?.text) {
-          sendMessage(textBlock.text)
-        }
-      }
-    }, [activeSessionId, sendMessage]),
+      useSessionStore.getState().clearSessionStreamState(activeSessionId)
+      useSessionStore.getState().markStreaming(activeSessionId, true)
+      ipc.query.retry(activeSessionId)
+    }, [activeSessionId]),
     dismissError: useCallback(() => {
       if (!activeSessionId) return
       useSessionStore.getState().setError(activeSessionId, null)

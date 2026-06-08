@@ -32,7 +32,7 @@ export interface SessionStreamState {
   isThinking: boolean
   toolEvents: ToolExecutionEvent[]
   compacting?: boolean
-  error?: { message: string; category: string; retrying: boolean; retryAttempt?: number; retryIn?: number }
+  error?: { message: string; category: string; retrying: boolean; retryAttempt?: number; retryMaxRetries?: number; retryIn?: number }
   finished?: boolean
   usage?: {
     inputTokens: number
@@ -112,7 +112,7 @@ interface SessionState {
   setCompactState: (sessionId: string, state: { active: boolean }) => void
   addToolEvent: (sessionId: string, event: ToolExecutionEvent) => void
   markStreaming: (sessionId: string, streaming: boolean) => void
-  setError: (sessionId: string, error: { message: string; category: string; retrying: boolean; retryAttempt?: number; retryIn?: number } | null) => void
+  setError: (sessionId: string, error: { message: string; category: string; retrying: boolean; retryAttempt?: number; retryMaxRetries?: number; retryIn?: number } | null) => void
   clearSessionStreamState: (sessionId: string) => void
   finishSession: (sessionId: string) => void
   dismissFinished: (sessionId: string) => void
