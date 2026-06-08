@@ -7,21 +7,11 @@ import {
   createBrowserOpenTool,
   McpManager, loadMcpConfig, saveMcpConfig, type McpServerConfig, type McpServerState,
   IdeManager, type IdeConnection, type OpenDiffParams, type OpenDiffResult, type DiagnosticFile,
-  codegraph, compressImageForAPI,
+  codegraph, compressImageForAPI, resolveConfiguredModel, resolveModelCapabilityProfile,
+  type RuntimeModelResolution, type ResolvedConfiguredModel,
 } from '@puddingagent/core'
 import type { ToolExecutionEvent } from '@puddingagent/core'
 import { Notification, shell, type BrowserWindow } from 'electron'
-
-function getActiveModelConfig() {
-  const config = loadAppConfig()
-  const data = config.modelGroups
-  if (!data?.activeModelId || !data?.groups) return null
-  for (const group of data.groups) {
-    const model = group.models?.find((m: any) => m.id === data.activeModelId)
-    if (model) return { model, group }
-  }
-  return null
-}
 
 export interface PendingPermissionInfo {
   id: string
@@ -161,24 +151,48 @@ export class SessionManager {
     }
   }
 
-  private resolveModelById(modelId: string): { provider: any; modelConfig: ModelConfig; protocol: string } | null {
+  private buildModelConfig(model: ResolvedConfiguredModel, appConfig: Record<string, any>): ModelConfig {
+    const modelProfile = resolveModelCapabilityProfile({
+      providerId: model.groupId,
+      modelId: model.modelId,
+      overrideProfileId: model.profileId,
+      profiles: appConfig.modelProfiles ?? appConfig.modelCapabilityProfiles,
+    })
+    return {
+      model: model.modelId,
+      maxTokens: model.maxTokens,
+      contextWindow: model.contextWindow,
+      compressAt: model.compressAt,
+      modelProfile,
+    }
+  }
+
+  private resolveModelById(modelId: string): RuntimeModelResolution & { protocol?: string; modelEntryId?: string } {
     const config = loadAppConfig()
     const data = config.modelGroups
-    if (!data?.groups) return null
-    for (const group of data.groups) {
-      const model = group.models?.find((m: any) => m.id === modelId)
-      if (model) {
-        const provider = this.createProvider(group)
-        const modelConfig: ModelConfig = {
-          model: model.modelId,
-          maxTokens: model.maxTokens || 32000,
-          contextWindow: model.contextWindow || 200000,
-          compressAt: model.compressAt || 0.9,
-        }
-        return { provider, modelConfig, protocol: group.protocol || 'anthropic' }
-      }
+    const resolved = resolveConfiguredModel(data?.groups, modelId)
+    if (resolved.status !== 'resolved') {
+      return { status: 'failed', warning: resolved.message }
     }
-    return null
+    const provider = this.createProvider({ ...resolved.model.group, baseUrl: resolved.model.baseUrl } as any)
+    const modelConfig = this.buildModelConfig(resolved.model, config)
+    return {
+      status: 'resolved',
+      provider,
+      modelConfig,
+      protocol: resolved.model.protocol || 'anthropic',
+      modelEntryId: resolved.model.modelEntryId,
+      warning: resolved.message,
+    }
+  }
+
+  private resolveActiveModel(): RuntimeModelResolution & { protocol?: string; modelEntryId?: string } {
+    const config = loadAppConfig()
+    const activeModelId = config.modelGroups?.activeModelId
+    if (!activeModelId) {
+      return { status: 'failed', warning: 'No active model selected. Please configure a model in settings.' }
+    }
+    return this.resolveModelById(activeModelId)
   }
 
   setSessionModel(sessionId: string, modelId: string): void {
@@ -193,7 +207,7 @@ export class SessionManager {
     const session = this.sessions.get(sessionId)
     if (session) {
       const resolved = this.resolveModelById(modelId)
-      if (resolved) {
+      if (resolved.status === 'resolved') {
         session.updateProvider(resolved.provider, resolved.modelConfig)
         ;(session as any)._protocol = resolved.protocol
       }
@@ -218,27 +232,27 @@ export class SessionManager {
 
     if (sessionModelId) {
       const resolved = this.resolveModelById(sessionModelId)
-      if (resolved) {
+      if (resolved.status === 'resolved') {
         modelConfig = resolved.modelConfig
         provider = resolved.provider
-        protocol = resolved.protocol
+        protocol = resolved.protocol || 'anthropic'
       } else {
         // Stored model no longer exists, fall back to global
-        const active = getActiveModelConfig()
-        if (!active) throw new Error('No active model selected. Please configure a model in settings.')
-        provider = this.createProvider(active.group)
-        modelConfig = { model: active.model.modelId, maxTokens: active.model.maxTokens || 32000, contextWindow: active.model.contextWindow || 200000, compressAt: active.model.compressAt || 0.9 }
-        protocol = active.group.protocol || 'anthropic'
-        this.history.setSessionModel(sessionId, active.model.id)
+        const active = this.resolveActiveModel()
+        if (active.status !== 'resolved') throw new Error(active.warning)
+        provider = active.provider
+        modelConfig = active.modelConfig
+        protocol = active.protocol || 'anthropic'
+        this.history.setSessionModel(sessionId, active.modelEntryId ?? active.modelConfig.model)
       }
     } else {
       // New session, no model stored yet — use global default
-      const active = getActiveModelConfig()
-      if (!active) throw new Error('No active model selected. Please configure a model in settings.')
-      provider = this.createProvider(active.group)
-      modelConfig = { model: active.model.modelId, maxTokens: active.model.maxTokens || 32000, contextWindow: active.model.contextWindow || 200000, compressAt: active.model.compressAt || 0.9 }
-      protocol = active.group.protocol || 'anthropic'
-      this.history.setSessionModel(sessionId, active.model.id)
+      const active = this.resolveActiveModel()
+      if (active.status !== 'resolved') throw new Error(active.warning)
+      provider = active.provider
+      modelConfig = active.modelConfig
+      protocol = active.protocol || 'anthropic'
+      this.history.setSessionModel(sessionId, active.modelEntryId ?? active.modelConfig.model)
     }
 
     const sessionConfig: SessionConfig = {
@@ -261,25 +275,7 @@ export class SessionManager {
       })
     }
     const session = new Session(sessionConfig, provider, this.history, permissionCallback, this.mcpManager, onPlanReview)
-    session.resolveModel = (modelId: string) => {
-      const config = loadAppConfig()
-      const data = config.modelGroups
-      if (!data?.groups) return null
-      for (const group of data.groups) {
-        const model = group.models?.find((m: any) => m.id === modelId || m.modelId === modelId)
-        if (model) {
-          const resolvedProvider = this.createProvider(group)
-          const resolvedConfig = {
-            model: model.modelId,
-            maxTokens: model.maxTokens || 32000,
-            contextWindow: model.contextWindow || 200000,
-            compressAt: model.compressAt || 0.9,
-          }
-          return { provider: resolvedProvider, modelConfig: resolvedConfig }
-        }
-      }
-      return null
-    }
+    session.resolveModel = (modelId: string) => this.resolveModelById(modelId)
     const onAskUser: AskUserCallback = async (question, options, multiSelect) => {
       return new Promise<string>((resolve) => {
         const id = uuid()

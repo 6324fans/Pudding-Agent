@@ -7,6 +7,7 @@ import { resolveExpertPrompt } from '../team/expert-prompts.js'
 import type { SubSessionOptions } from '../sub-session.js'
 import type { ModelProvider } from '../model-provider.js'
 import type { ModelConfig } from '../types.js'
+import type { RuntimeModelResolution } from '../model-resolution.js'
 import { routeSkills } from '../team/skill-router.js'
 import { renderSkill, type SkillLoader } from '../skills/index.js'
 
@@ -16,7 +17,7 @@ export interface TeamToolDeps {
   buildSubSessionDeps: () => Omit<SubSessionOptions, 'prompt' | 'agentType' | 'signal' | 'onAgentProgress' | 'onAgentText' | 'mailbox' | 'onToolEvent'>
   provider?: ModelProvider
   modelConfig?: ModelConfig
-  resolveModel?: (modelId: string) => { provider: ModelProvider; modelConfig: ModelConfig } | null
+  resolveModel?: (modelId: string) => RuntimeModelResolution
   /**
    * Lazy accessor for the skill loader. The team tool is registered before
    * the loader is ready, so the deps object holds a thunk that resolves the
@@ -126,6 +127,10 @@ export function createTeamTool(deps: TeamToolDeps): ToolHandler {
             type: 'number',
             description: 'Idle timeout in minutes — team is killed if NO member has activity for this long. Heartbeat-based, so active teams are never killed. Default: 60.',
           },
+          pmModelId: {
+            type: 'string',
+            description: 'Optional model id for the Team PM only. Use exactly a configured model id such as "groupId:modelId" when the user explicitly asks the PM to use a specific model. Omit to inherit the main session model.',
+          },
           archive_path: {
             type: 'string',
             description: 'Optional: where to put archived workspaces (default: <cwd>/.team-archive)',
@@ -208,63 +213,96 @@ export function createTeamTool(deps: TeamToolDeps): ToolHandler {
       }
 
       const bgTask = deps.backgroundTasks.registerTeam(objective, plan.members)
+      let team: TeamRuntime | undefined
+      let registered = false
+      let pmModelWarning: string | undefined
 
-      // Route skills (best-effort, fails open). Two slots, at most one skill each:
-      //   - pmContent → injected into PM system prompt (dialogue/process methodology)
-      //   - workerContent → injected into each worker's task description (execution methodology)
-      let pmSkillContent: string | undefined
-      let workerSkillContent: string | undefined
       let routerNote: string | undefined
-      const skillLoader = deps.getSkillLoader?.()
-      if (skillLoader && deps.provider && deps.modelConfig) {
-        const skills = skillLoader.getAll()
-        if (skills.length > 0) {
-          const decision = await routeSkills(objective, skills, {
-            provider: deps.provider,
-            modelConfig: deps.modelConfig,
-            onUsage: deps.onUsage,
-          })
-          if (decision.pmSkill) {
-            const skill = skillLoader.get(decision.pmSkill)
-            if (skill) pmSkillContent = renderSkill(skill)
+
+      try {
+        let aiPM = deps.provider && deps.modelConfig ? { provider: deps.provider, modelConfig: deps.modelConfig } : undefined
+        const pmModelId = input.pmModelId as string | undefined
+        if (pmModelId) {
+          const resolved = deps.resolveModel?.(pmModelId)
+          if (resolved?.status === 'resolved') {
+            aiPM = { provider: resolved.provider, modelConfig: resolved.modelConfig }
+            pmModelWarning = resolved.warning
+          } else {
+            pmModelWarning = resolved?.warning ?? `Requested PM model "${pmModelId}" was not found; PM is using the main session model.`
           }
-          if (decision.workerSkill) {
-            const skill = skillLoader.get(decision.workerSkill)
-            if (skill) workerSkillContent = renderSkill(skill)
+        }
+
+        // Route skills (best-effort, fails open). Two slots, at most one skill each:
+        //   - pmContent → injected into PM system prompt (dialogue/process methodology)
+        //   - workerContent → injected into each worker's task description (execution methodology)
+        let pmSkillContent: string | undefined
+        let workerSkillContent: string | undefined
+        const skillLoader = deps.getSkillLoader?.()
+        if (skillLoader && deps.provider && deps.modelConfig) {
+          const skills = skillLoader.getAll()
+          if (skills.length > 0) {
+            const decision = await routeSkills(objective, skills, {
+              provider: deps.provider,
+              modelConfig: deps.modelConfig,
+              onUsage: deps.onUsage,
+            })
+            if (decision.pmSkill) {
+              const skill = skillLoader.get(decision.pmSkill)
+              if (skill) pmSkillContent = renderSkill(skill)
+            }
+            if (decision.workerSkill) {
+              const skill = skillLoader.get(decision.workerSkill)
+              if (skill) workerSkillContent = renderSkill(skill)
+            }
+            if (decision.pmSkill || decision.workerSkill) {
+              routerNote = `Skill router: pm=${decision.pmSkill ?? '∅'}, workers=${decision.workerSkill ?? '∅'}${decision.reasoning ? ` — ${decision.reasoning}` : ''}`
+            }
           }
-          if (decision.pmSkill || decision.workerSkill) {
-            routerNote = `Skill router: pm=${decision.pmSkill ?? '∅'}, workers=${decision.workerSkill ?? '∅'}${decision.reasoning ? ` — ${decision.reasoning}` : ''}`
-          }
+        }
+
+        team = new TeamRuntime({
+          id: bgTask.id,
+          objective,
+          plan,
+          archivePath: input.archive_path as string | undefined,
+          teamTimeoutMs: typeof timeoutMinutes === 'number' && timeoutMinutes > 0 ? timeoutMinutes * 60_000 : undefined,
+          subSessionDeps: deps.buildSubSessionDeps(),
+          resolveModel: deps.resolveModel,
+          aiPM,
+          skillInjection: { pmContent: pmSkillContent, workerContent: workerSkillContent },
+          onUsage: deps.onUsage,
+          onEvent: (e) => {
+            deps.backgroundTasks.emitEvent(bgTask.id, e)
+            deps.onTeamEvent?.(bgTask.id, e)
+          },
+          onComplete: (summary, meta) => {
+            deps.backgroundTasks.completeTeam(bgTask.id, { summary, archivePath: meta?.archivePath, archiveError: meta?.archiveError })
+            deps.teamRegistry.remove(bgTask.id)
+          },
+          onFail: (err) => {
+            deps.backgroundTasks.failTeam(bgTask.id, err)
+            deps.teamRegistry.remove(bgTask.id)
+          },
+        })
+
+        deps.teamRegistry.register(team)
+        registered = true
+        await team.start()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        team?.stop()
+        if (registered) deps.teamRegistry.remove(bgTask.id)
+        deps.backgroundTasks.failTeam(bgTask.id, message)
+        return {
+          content: `Team startup failed: ${message}`,
+          isError: true,
         }
       }
 
-      const team = new TeamRuntime({
-        id: bgTask.id,
-        objective,
-        plan,
-        archivePath: input.archive_path as string | undefined,
-        teamTimeoutMs: typeof timeoutMinutes === 'number' && timeoutMinutes > 0 ? timeoutMinutes * 60_000 : undefined,
-        subSessionDeps: deps.buildSubSessionDeps(),
-        resolveModel: deps.resolveModel,
-        aiPM: deps.provider && deps.modelConfig ? { provider: deps.provider, modelConfig: deps.modelConfig } : undefined,
-        skillInjection: { pmContent: pmSkillContent, workerContent: workerSkillContent },
-        onUsage: deps.onUsage,
-        onEvent: (e) => {
-          deps.backgroundTasks.emitEvent(bgTask.id, e)
-          deps.onTeamEvent?.(bgTask.id, e)
-        },
-        onComplete: (summary) => {
-          deps.backgroundTasks.completeTeam(bgTask.id, { summary })
-          deps.teamRegistry.remove(bgTask.id)
-        },
-        onFail: (err) => {
-          deps.backgroundTasks.failTeam(bgTask.id, err)
-          deps.teamRegistry.remove(bgTask.id)
-        },
-      })
-
-      deps.teamRegistry.register(team)
-      await team.start()
+      if (!team) {
+        deps.backgroundTasks.failTeam(bgTask.id, 'Team runtime was not created')
+        return { content: 'Team startup failed: Team runtime was not created', isError: true }
+      }
 
       const members = team.getMembers()
       const memberLines = members.length > 0
@@ -280,6 +318,7 @@ export function createTeamTool(deps: TeamToolDeps): ToolHandler {
           `Objective: ${objective}`,
           members.length > 0 ? `Initial members:\n${memberLines}` : `The PM is now planning staffing and task breakdown autonomously.`,
           taskLines ? `Initial tasks (hints):\n${taskLines}` : '',
+          pmModelWarning ? `PM model warning: ${pmModelWarning}` : '',
           routerNote ? `\n${routerNote}` : '',
           ``,
           `HANDOFF CONTRACT — IMPORTANT:`,

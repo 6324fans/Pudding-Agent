@@ -112,4 +112,33 @@ describe('compactMessages status', () => {
     const progressCalls = onChunk.mock.calls.filter(([c]) => c.type === 'compact_progress')
     expect(progressCalls.length).toBeGreaterThan(0)
   })
+
+  it('keeps head and tail for large retained tool results after compaction', async () => {
+    const msgs = Array.from({ length: MIN_COMPACT_LENGTH + 4 }, (_, i) =>
+      i % 2 === 0 ? userMsg(`u${i}`, `u${i}`) : assistantMsg(`a${i}`, `a${i}`)
+    )
+    msgs[msgs.length - 1] = {
+      id: 'tool-result',
+      role: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 't1',
+        content: `HEAD-${'x'.repeat(200)}-${'y'.repeat(200)}-TAIL`,
+        is_error: false,
+      }],
+      timestamp: 0,
+    }
+
+    const result = await compactMessages(msgs, fakeProvider('summary content'), {
+      ...baseConfig,
+      toolResultRetention: { keptToolResultChars: 160 },
+    })
+
+    expect(result.status).toBe('compacted')
+    const retained = result.messages.find(m => m.id === 'tool-result')!
+    const block = retained.content[0] as any
+    expect(block.content).toContain('HEAD')
+    expect(block.content).toContain('TAIL')
+    expect(block.content).toContain('Tool result truncated during compaction')
+  })
 })

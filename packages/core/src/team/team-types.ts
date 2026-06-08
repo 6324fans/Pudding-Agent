@@ -166,6 +166,7 @@ export type TeamEvent =
   | { type: 'task_cancelled'; taskId: string; reason: string; timestamp: number }
   | { type: 'task_failed'; taskId: string; error: string; failureCount: number; timestamp: number }
   | { type: 'member_progress'; memberId: string; text: string; timestamp: number }
+  | { type: 'model_resolution_warning'; memberId?: string; requestedModelId: string; message: string; timestamp: number }
   | { type: 'tool_start'; memberId: string; toolName: string; timestamp: number }
   | { type: 'tool_complete'; memberId: string; toolName: string; timestamp: number }
   | { type: 'tool_error'; memberId: string; toolName: string; reason?: string; timestamp: number }
@@ -173,7 +174,7 @@ export type TeamEvent =
   | { type: 'message_sent'; from: string; to: string; intent: string; timestamp: number }
   | { type: 'intervention_received'; from: 'user' | 'main_session' | 'member'; intent: string; fromMemberId?: string; timestamp: number }
   | { type: 'team_synthesizing'; timestamp: number }
-  | { type: 'team_completed'; summary: string; timestamp: number }
+  | { type: 'team_completed'; summary: string; archivePath?: string; archiveError?: string; timestamp: number }
   | { type: 'team_failed'; error: string; timestamp: number }
 
 export interface TeamConcurrencyPolicy {

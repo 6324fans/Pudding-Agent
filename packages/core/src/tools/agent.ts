@@ -4,6 +4,7 @@ import type { ModelProvider } from '../model-provider.js'
 import type { ModelConfig } from '../types.js'
 import type { ToolExecutionEvent, PermissionCallback } from '../tool-runner.js'
 import { runSubSession } from '../sub-session.js'
+import type { RuntimeModelResolution } from '../model-resolution.js'
 
 export interface AgentToolDeps {
   provider: ModelProvider
@@ -13,7 +14,7 @@ export interface AgentToolDeps {
   onToolEvent?: (event: ToolExecutionEvent) => void
   onPermissionRequest?: PermissionCallback
   isSubAgent?: boolean
-  resolveModel?: (modelId: string) => { provider: ModelProvider; modelConfig: ModelConfig } | null
+  resolveModel?: (modelId: string) => RuntimeModelResolution
   onAgentProgress?: (agentToolUseId: string, event: { toolName: string; toolStatus: 'start' | 'complete' | 'error'; toolInput?: Record<string, unknown>; toolResult?: { content: string; isError?: boolean }; toolCount: number }) => void
   onAgentText?: (agentToolUseId: string, text: string) => void
   onAgentComplete?: (agentToolUseId: string, result: { content: string; turns: number; toolsUsed: string[] }) => void
@@ -51,7 +52,7 @@ export function createAgentTool(deps: AgentToolDeps): ToolHandler {
             description: 'The type of specialized agent to use (default: general)',
           },
           modelId: { type: 'string', description: 'Model ID to use for this sub-agent (from configured models). Defaults to current session model.' },
-          maxTurns: { type: 'number', description: 'Maximum conversation turns (default: 1000)' },
+          maxTurns: { type: 'number', description: 'Maximum conversation turns. Omit to use the selected agent type default; explicit values override the type default.' },
           run_in_background: {
             type: 'boolean',
             description: 'Run this agent in the background. Returns immediately with a task_id. You will receive a <task-notification> when it completes.',
@@ -66,19 +67,23 @@ export function createAgentTool(deps: AgentToolDeps): ToolHandler {
       }
 
       const prompt = input.prompt as string
-      const maxTurns = (input.maxTurns as number) || 1000
+      const maxTurns = typeof input.maxTurns === 'number' ? input.maxTurns : undefined
       const agentType = (input.type as string) || 'general'
       const requestedModelId = input.modelId as string | undefined
       const toolUseId = context.toolUseId || 'unknown'
 
       let effectiveProvider = deps.provider
       let effectiveModelConfig = deps.modelConfig
+      let modelWarning: string | undefined
 
-      if (requestedModelId && deps.resolveModel) {
-        const resolved = deps.resolveModel(requestedModelId)
-        if (resolved) {
+      if (requestedModelId) {
+        const resolved = deps.resolveModel?.(requestedModelId)
+        if (resolved?.status === 'resolved') {
           effectiveProvider = resolved.provider
           effectiveModelConfig = resolved.modelConfig
+          modelWarning = resolved.warning
+        } else {
+          modelWarning = resolved?.warning ?? `Requested model "${requestedModelId}" was not found; using the main session model.`
         }
       }
 
@@ -111,6 +116,10 @@ export function createAgentTool(deps: AgentToolDeps): ToolHandler {
             onUsage: (u) => deps.onUsage?.(u),
           })
         }).then(result => {
+          if (result.status && result.status !== 'completed') {
+            deps.backgroundTasks!.failAgent(task.id, describeSubSessionFailure(result))
+            return
+          }
           deps.onAgentComplete?.(toolUseId, result)
           deps.backgroundTasks!.completeAgent(task.id, { result: result.content, turns: result.turns, toolsUsed: result.toolsUsed })
         }).catch(err => {
@@ -121,7 +130,14 @@ export function createAgentTool(deps: AgentToolDeps): ToolHandler {
         })
 
         return {
-          content: `Background agent started.\nTask ID: ${task.id}\nType: ${agentType}\nPrompt: ${prompt}\nYou will receive a <task-notification> when it completes.`,
+          content: [
+            `Background agent started.`,
+            `Task ID: ${task.id}`,
+            `Type: ${agentType}`,
+            modelWarning ? `Model warning: ${modelWarning}` : '',
+            `Prompt: ${prompt}`,
+            `You will receive a <task-notification> when it completes.`,
+          ].filter(Boolean).join('\n'),
         }
       }
 
@@ -158,18 +174,37 @@ export function createAgentTool(deps: AgentToolDeps): ToolHandler {
         if (raceResult.type === 'backgrounded') {
           const task = deps.backgroundTasks!.registerAgent(prompt, agentType)
           sessionPromise.then(result => {
+            if (result.status && result.status !== 'completed') {
+              deps.backgroundTasks!.failAgent(task.id, describeSubSessionFailure(result))
+              return
+            }
             deps.onAgentComplete?.(toolUseId, result)
             deps.backgroundTasks!.completeAgent(task.id, { result: result.content, turns: result.turns, toolsUsed: result.toolsUsed })
           }).catch(err => {
             deps.backgroundTasks!.failAgent(task.id, err instanceof Error ? err.message : String(err))
           })
           return {
-            content: `Agent moved to background.\nTask ID: ${task.id}\nYou will receive a <task-notification> when it completes.`,
+            content: [
+              `Agent moved to background.`,
+              `Task ID: ${task.id}`,
+              modelWarning ? `Model warning: ${modelWarning}` : '',
+              `You will receive a <task-notification> when it completes.`,
+            ].filter(Boolean).join('\n'),
+          }
+        }
+
+        if (raceResult.result!.status && raceResult.result!.status !== 'completed') {
+          return {
+            content: `Sub-agent error: ${describeSubSessionFailure(raceResult.result!)}`,
+            isError: true,
           }
         }
 
         deps.onAgentComplete?.(toolUseId, raceResult.result!)
-        return { content: raceResult.result!.content }
+        const resultContent = modelWarning
+          ? `Model warning: ${modelWarning}\n\n${raceResult.result!.content}`
+          : raceResult.result!.content
+        return { content: resultContent }
       } catch (error) {
         return {
           content: `Sub-agent error: ${error instanceof Error ? error.message : String(error)}`,
@@ -181,4 +216,14 @@ export function createAgentTool(deps: AgentToolDeps): ToolHandler {
       }
     },
   }
+}
+
+function describeSubSessionFailure(result: { status?: string; turns: number; content: string }): string {
+  if (result.status === 'max_turns_exhausted') {
+    return `Sub-agent reached max turns without completing after ${result.turns} turns.`
+  }
+  if (result.status === 'aborted') {
+    return 'Sub-agent was aborted before completing before max turns were reached.'
+  }
+  return result.content || 'Sub-agent failed before completing.'
 }

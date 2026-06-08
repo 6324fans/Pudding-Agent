@@ -6,6 +6,9 @@ import { ToolRunner } from './tool-runner.js'
 import { PermissionChecker } from './permissions.js'
 import type { ToolExecutionEvent, PermissionCallback } from './tool-runner.js'
 import { getAgentType, filterToolsForAgent, isWriteAllowedForPlanAgent, isBashAllowedForAuditor } from './agent-types.js'
+import { compactMessages, MIN_COMPACT_LENGTH } from './compact.js'
+import { estimateTokens } from './token-estimation.js'
+import { UsageTracker } from './usage-tracker.js'
 
 const SUB_AGENT_SYSTEM = `You are a sub-agent executing a specific task. Focus on completing the task efficiently.
 You have access to the same tools as the main session.
@@ -47,6 +50,7 @@ export interface SubSessionResult {
   content: string
   turns: number
   toolsUsed: string[]
+  status?: 'completed' | 'max_turns_exhausted' | 'aborted'
 }
 
 export function formatExternalMessages(msgs: Array<{ from: string; content: string; intent?: string; priority: string }>): string {
@@ -64,7 +68,7 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
     toolRegistry,
     modelConfig,
     cwd,
-    maxTurns = 1000,
+    maxTurns,
     signal,
     onToolEvent,
     onPermissionRequest,
@@ -75,7 +79,7 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
   } = opts
 
   const agentDef = opts.agentType ? getAgentType(opts.agentType) : undefined
-  const effectiveMaxTurns = maxTurns || agentDef?.maxTurns || 1000
+  const effectiveMaxTurns = maxTurns ?? agentDef?.maxTurns ?? 1000
   const systemPrompt = agentDef?.systemPrompt || SUB_AGENT_SYSTEM
 
   const permChecker = new PermissionChecker(opts.permissionMode || 'relaxed')
@@ -101,9 +105,16 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
   const toolsUsed: string[] = []
   let totalToolCount = 0
   let turns = 0
+  const usageTracker = new UsageTracker(modelConfig.contextWindow || 200000)
+  let subSessionJustCompacted = false
 
   while (turns < effectiveMaxTurns) {
     if (signal?.aborted) break
+    if (!subSessionJustCompacted && await compactSubSessionIfNeeded(messages, provider, modelConfig, usageTracker, onStreamHeartbeat, signal)) {
+      subSessionJustCompacted = true
+    } else {
+      subSessionJustCompacted = false
+    }
     turns++
 
     const incoming = opts.mailbox?.drain() ?? []
@@ -192,6 +203,7 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
         toolUses.push(currentToolUse)
         currentToolUse = null
       } else if (chunk.type === 'message_end' && chunk.usage) {
+        usageTracker.addTurn(chunk.usage)
         onUsage?.(chunk.usage)
       }
     }
@@ -216,7 +228,7 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
 
     // If no tool uses, we're done
     if (toolUses.length === 0) {
-      return { content: textContent, turns, toolsUsed: [...new Set(toolsUsed)] }
+      return { content: textContent, turns, toolsUsed: [...new Set(toolsUsed)], status: 'completed' }
     }
 
     // Execute tools and collect results
@@ -310,5 +322,44 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
     content: lastText?.text || '[Sub-agent reached max turns without final response]',
     turns,
     toolsUsed: [...new Set(toolsUsed)],
+    status: signal?.aborted ? 'aborted' : 'max_turns_exhausted',
   }
+}
+
+async function compactSubSessionIfNeeded(
+  messages: Message[],
+  provider: ModelProvider,
+  modelConfig: ModelConfig,
+  usageTracker: UsageTracker,
+  onStreamHeartbeat?: () => void,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!shouldCompactSubSession(messages, usageTracker, modelConfig)) return false
+  try {
+    const compactResult = await compactMessages(
+      messages,
+      provider,
+      modelConfig,
+      (chunk) => {
+        if (chunk.type === 'compact_progress') onStreamHeartbeat?.()
+      },
+      signal,
+    )
+    if (compactResult.status === 'compacted') {
+      messages.splice(0, messages.length, ...compactResult.messages)
+      usageTracker.resetLastTurn(estimateTokens(messages))
+    }
+  } catch {
+    // Fail open: sub-agents should continue on the original message history
+    // when the summarizer stream fails, rather than aborting the delegated task.
+  }
+  return true
+}
+
+function shouldCompactSubSession(messages: Message[], usageTracker: UsageTracker, modelConfig: ModelConfig): boolean {
+  if (messages.length < MIN_COMPACT_LENGTH) return false
+  const compressAt = modelConfig.compressAt ?? 0.9
+  if (usageTracker.shouldCompact(compressAt)) return true
+  const contextWindow = modelConfig.contextWindow || 200000
+  return estimateTokens(messages) > contextWindow * compressAt
 }

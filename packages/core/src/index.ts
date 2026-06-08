@@ -1,5 +1,7 @@
 export * from './types.js'
 export * from './model-provider.js'
+export * from './model-resolution.js'
+export * from './model-profile.js'
 export { AnthropicProvider } from './providers/anthropic.js'
 export { OpenAIChatProvider } from './providers/openai-chat.js'
 export { OpenAIResponsesProvider } from './providers/openai-responses.js'

@@ -23,6 +23,8 @@ export interface BackgroundTask {
   result?: string
   turns?: number
   toolsUsed?: string[]
+  archivePath?: string
+  archiveError?: string
 }
 
 export class BackgroundTaskManager {
@@ -180,12 +182,14 @@ export class BackgroundTaskManager {
     return task
   }
 
-  completeTeam(id: string, result: { summary: string }): void {
+  completeTeam(id: string, result: { summary: string; archivePath?: string; archiveError?: string }): void {
     const task = this.tasks.get(id)
     if (!task || task.type !== 'team') return
     task.status = 'completed'
     task.completedAt = Date.now()
     task.result = result.summary
+    task.archivePath = result.archivePath
+    task.archiveError = result.archiveError
     this.onComplete?.(task)
   }
 

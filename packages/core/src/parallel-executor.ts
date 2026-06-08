@@ -1,4 +1,5 @@
 import type { ToolRunner, ToolExecutionEvent } from './tool-runner.js'
+import type { ModelCapabilityProfile } from './model-profile.js'
 
 export interface ToolUseBlock {
   type: 'tool_use'
@@ -22,7 +23,7 @@ const READ_TOOLS = new Set([
 
 const LONG_RUNNING_TOOLS = new Set(['Agent', 'bash', 'monitor'])
 
-const MAX_CONCURRENCY = 5
+const DEFAULT_MAX_CONCURRENCY = 5
 
 class Semaphore {
   private queue: Array<() => void> = []
@@ -49,7 +50,18 @@ class Semaphore {
 }
 
 export class ParallelExecutor {
-  constructor(private toolRunner: ToolRunner) {}
+  private maxConcurrency: number
+
+  constructor(
+    private toolRunner: ToolRunner,
+    options: { modelProfile?: ModelCapabilityProfile } = {},
+  ) {
+    this.maxConcurrency = normalizeMaxConcurrency(options.modelProfile?.maxParallelToolCalls)
+  }
+
+  updateModelProfile(modelProfile?: ModelCapabilityProfile): void {
+    this.maxConcurrency = normalizeMaxConcurrency(modelProfile?.maxParallelToolCalls)
+  }
 
   /**
    * Execute a single tool, but abandon the promise if the signal aborts
@@ -108,7 +120,7 @@ export class ParallelExecutor {
     // Execute reads in parallel
     let readHadError = false
     if (readIndices.length > 0) {
-      const semaphore = new Semaphore(MAX_CONCURRENCY)
+      const semaphore = new Semaphore(this.maxConcurrency)
       const readPromises = readIndices.map(async (idx) => {
         if (batchAbort.signal.aborted) {
           results[idx] = { tool_use_id: blocks[idx].id, content: 'Cancelled: sibling tool failed', is_error: true }
@@ -168,4 +180,9 @@ export class ParallelExecutor {
 
     return results
   }
+}
+
+function normalizeMaxConcurrency(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_CONCURRENCY
+  return Math.min(DEFAULT_MAX_CONCURRENCY, Math.max(1, Math.round(value)))
 }

@@ -226,6 +226,50 @@ describe('ParallelExecutor', () => {
     expect(maxConcurrent).toBe(5)
   })
 
+  it('uses model profile maxParallelToolCalls when present', async () => {
+    const registry = new ToolRegistry()
+    let maxConcurrent = 0
+    let current = 0
+
+    registry.register({
+      definition: { name: 'file_read', description: 'Read', inputSchema: { type: 'object', properties: {} } },
+      execute: async () => {
+        current++
+        if (current > maxConcurrent) maxConcurrent = current
+        await new Promise(r => setTimeout(r, 40))
+        current--
+        return { content: 'ok' }
+      },
+    })
+
+    const executor = new ParallelExecutor(createRunner(registry), {
+      modelProfile: {
+        id: 'serialish',
+        label: 'Serial-ish',
+        match: { providerPattern: '*', modelPattern: '*' },
+        reasoningReliability: 'medium',
+        toolDiscipline: 'medium',
+        contextUseDiscipline: 'medium',
+        evidenceStrictness: 'strict',
+        contractVerbosity: 'explicit',
+        requiresCompactActionContracts: true,
+        defaultPlanDepth: 'detailed',
+        maxParallelToolCalls: 2,
+        requireStepwiseVerification: true,
+      },
+    })
+    const blocks = Array.from({ length: 6 }, (_, i) => ({
+      type: 'tool_use' as const,
+      id: `r${i}`,
+      name: 'file_read',
+      input: {},
+    }))
+
+    await executor.executeBatch(blocks, () => {})
+
+    expect(maxConcurrent).toBe(2)
+  })
+
   it('should respect external abort signal', async () => {
     const registry = new ToolRegistry()
 

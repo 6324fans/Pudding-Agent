@@ -98,7 +98,7 @@ export class Session {
   private turnsSinceTaskTool = 0
   private planMode: 'normal' | 'planning' | 'awaiting_approval' = 'normal'
   private onPlanReview?: (planFile: string, content: string) => Promise<{ approved: boolean; feedback?: string }>
-  resolveModel?: (modelId: string) => { provider: ModelProvider; modelConfig: ModelConfig } | null
+  resolveModel?: (modelId: string) => import('./model-resolution.js').RuntimeModelResolution
   ideContext?: { filePath?: string; text?: string; selection?: { start: { line: number }; end: { line: number } } | null }
   private pendingNotifications: Array<{
     type: 'shell_complete' | 'agent_complete' | 'team_progress' | 'team_complete'
@@ -186,7 +186,7 @@ export class Session {
       buildSubSessionDeps: buildTeamSubSessionDeps as any,
       provider: this.provider,
       modelConfig: this.config.modelConfig,
-      resolveModel: (modelId: string) => this.resolveModel?.(modelId) ?? null,
+      resolveModel: (modelId: string) => this.resolveModel?.(modelId) ?? { status: 'failed', warning: `Requested model "${modelId}" was not found; using the main session model.` },
       getSkillLoader: () => this.skillLoader,
       onUsage: onSubAgentUsage,
       onTeamEvent: (teamId, event) => {
@@ -195,12 +195,19 @@ export class Session {
         // etc.) fire before completeTeam() and would cause the main session to think
         // the team is done prematurely — suppress them.
         if (event.type === 'team_completed') {
-          this.captureTeamFinalSnapshot(teamId)
+          const archivePath = (event as any).archivePath
+          const archiveError = (event as any).archiveError
+          const archiveLine = archivePath
+            ? `\n\nTeam workspace archived to: ${archivePath}\nUse this archive directory for task artifacts/results/contracts. Do NOT read .team/ for this completed team; it has been moved.`
+            : archiveError
+              ? `\n\nTeam workspace archive failed: ${archiveError}\nDo not assume .team/ or .team-archive/ contains complete artifacts.`
+              : ''
+          this.captureTeamFinalSnapshot(teamId, { archivePath, archiveError })
           this.pendingNotifications.push({
             type: 'team_complete',
             taskId: teamId,
             status: 'completed',
-            teamEvent: `Team finished. Final summary:\n${(event as any).summary ?? ''}\n\nDo NOT call background_status / background_events on this team again — it is done.`,
+            teamEvent: `Team finished. Final summary:\n${(event as any).summary ?? ''}${archiveLine}\n\nDo NOT call background_status / background_events on this team again — it is done.`,
           })
         } else if (event.type === 'team_failed') {
           this.captureTeamFinalSnapshot(teamId)
@@ -278,7 +285,7 @@ export class Session {
     this.toolRunner.fileReadState = this.fileReadState
     this.toolRunner.backgroundTasks = this.backgroundTasks
     this.toolRunner.planModeCwd = this.config.cwd
-    this.parallelExecutor = new ParallelExecutor(this.toolRunner)
+    this.parallelExecutor = new ParallelExecutor(this.toolRunner, { modelProfile: this.config.modelConfig.modelProfile })
 
     // Asynchronously load hooks and rebuild ToolRunner
     this.hooksReady = this.initHooks(onPermissionRequest)
@@ -296,7 +303,7 @@ export class Session {
       onToolEvent: undefined,
       onPermissionRequest,
       isSubAgent: false,
-      resolveModel: (modelId: string) => this.resolveModel?.(modelId) ?? null,
+      resolveModel: (modelId: string) => this.resolveModel?.(modelId) ?? { status: 'failed', warning: `Requested model "${modelId}" was not found; using the main session model.` },
       backgroundTasks: this.backgroundTasks,
       onAgentProgress: (agentToolUseId, event) => {
         this.currentEvents?.onAgentProgress?.(agentToolUseId, event)
@@ -331,7 +338,7 @@ export class Session {
       this.toolRunner.fileReadState = this.fileReadState
       this.toolRunner.backgroundTasks = this.backgroundTasks
       this.toolRunner.planModeCwd = this.config.cwd
-      this.parallelExecutor = new ParallelExecutor(this.toolRunner)
+      this.parallelExecutor = new ParallelExecutor(this.toolRunner, { modelProfile: this.config.modelConfig.modelProfile })
     } catch {
       // Hooks are optional — if loading fails, continue without them
     }
@@ -390,6 +397,7 @@ export class Session {
   updateProvider(provider: ModelProvider, modelConfig: ModelConfig): void {
     this.provider = provider
     this.config.modelConfig = { ...this.config.modelConfig, ...modelConfig }
+    this.parallelExecutor.updateModelProfile(this.config.modelConfig.modelProfile)
     if (modelConfig.contextWindow) {
       this.usageTracker.setContextWindow(modelConfig.contextWindow)
       // Bridge lastInputTokens to a model-aware estimate so swapping context
@@ -512,13 +520,15 @@ export class Session {
         if (group.models?.length) {
           for (const m of group.models) {
             const active = m.id === modelGroups.activeModelId ? ' (current)' : ''
-            modelLines.push(`- ${m.name} [modelId: "${m.modelId}"]${active}`)
+            const composite = `${group.id}:${m.modelId}`
+            const label = m.name ? `${m.name} ` : ''
+            modelLines.push(`- ${label}[modelId: "${composite}", entryId: "${m.id}", apiModelId: "${m.modelId}"]${active}`)
           }
         }
       }
       if (modelLines.length > 0) {
         this.config.modelConfig.systemPrompt.push({
-          content: `<available-models>\nWhen dispatching sub-agents via the Agent tool, you can specify a modelId to use a different model. Available models:\n${modelLines.join('\n')}\nIf the user asks to use a specific model for a sub-agent, pass its modelId value.\n</available-models>`,
+          content: `<available-models>\nWhen dispatching sub-agents via Agent or configuring Team members, you can specify modelId to use a different configured model. Prefer the composite groupId:modelId value because API model ids and display names may be ambiguous. Available models:\n${modelLines.join('\n')}\nIf the user asks to use a specific model for a sub-agent or team member, pass its modelId value exactly.\n</available-models>`,
           cacheable: false,
         })
       }
@@ -1063,7 +1073,7 @@ export class Session {
    * on team_completed / team_failed — at that point the runtime is still alive
    * and getMembers/getTasks/getManagerState are still resolvable.
    */
-  private captureTeamFinalSnapshot(taskId: string): void {
+  private captureTeamFinalSnapshot(taskId: string, meta: { archivePath?: string; archiveError?: string } = {}): void {
     const team = this.teamRegistry.get(taskId)
     if (!team) return
     const tasks = team.getTasks()
@@ -1072,6 +1082,8 @@ export class Session {
       id: team.id,
       objective: team.objective,
       status: team.getStatus(),
+      archivePath: meta.archivePath,
+      archiveError: meta.archiveError,
       manager: team.getManagerState(),
       members: team.getMembers(),
       tasks: tasks.map(t => ({

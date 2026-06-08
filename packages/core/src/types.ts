@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ModelCapabilityProfile } from './model-profile.js'
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
@@ -124,6 +125,23 @@ export interface ModelConfig {
   effort?: ReasoningEffort
   contextWindow?: number
   compressAt?: number
+  /**
+   * Runtime model capability profile. When omitted, runtime behavior stays on
+   * the standard defaults.
+   */
+  modelProfile?: ModelCapabilityProfile
+  /**
+   * Legacy pre-compaction cleanup. Defaults to false because the product
+   * prioritizes evidence retention over token conservation.
+   */
+  toolResultRetention?: {
+    microCompact?: boolean
+    keptToolResultChars?: number
+    keptErrorToolResultChars?: number
+    summaryToolResultChars?: number
+    summaryErrorToolResultChars?: number
+    summaryTotalToolResultChars?: number
+  }
   /**
    * Stable identifier for cache routing. Same value across calls of the
    * same role (main session / PM / specific worker role / skill router) so

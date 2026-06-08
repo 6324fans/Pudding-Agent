@@ -23,6 +23,7 @@ import { resolveExpertPrompt } from './expert-prompts.js'
 import type { SubSessionOptions } from '../sub-session.js'
 import type { ModelProvider } from '../model-provider.js'
 import type { ModelConfig } from '../types.js'
+import type { RuntimeModelResolution } from '../model-resolution.js'
 
 export interface TeamRuntimePlan {
   members: TeamMemberSpec[]
@@ -46,7 +47,7 @@ export interface TeamRuntimeOptions {
   teamTimeoutMs?: number
   archivePath?: string
   aiPM?: { provider: ModelProvider; modelConfig: ModelConfig }
-  resolveModel?: (modelId: string) => { provider: ModelProvider; modelConfig: ModelConfig } | null
+  resolveModel?: (modelId: string) => RuntimeModelResolution
   // Skill content selected by SkillRouter at team start. Both fields are
   // OPTIONAL plain text. The PM content is appended to PM's system prompt
   // (dialogue methodology); the worker content is appended to each task
@@ -56,7 +57,7 @@ export interface TeamRuntimeOptions {
   /** Sink for PM's own LLM consumption — bubble up to host session usage. */
   onUsage?: (usage: { inputTokens: number; outputTokens: number; cacheCreationInputTokens?: number; cacheReadInputTokens?: number }) => void
   onEvent?: (event: TeamEvent) => void
-  onComplete?: (summary: string) => void
+  onComplete?: (summary: string, meta?: { archivePath?: string; archiveError?: string }) => void
   onFail?: (error: string) => void
 }
 
@@ -446,9 +447,13 @@ export class TeamRuntime {
             const finalSummary = archivePath
               ? `(partial) ${partialSummary}\n\nArchived to: ${archivePath}`
               : `(partial) ${partialSummary}`
-            this.opts.onComplete?.(finalSummary)
-          }).catch(() => {
-            this.opts.onComplete?.(`(partial) ${partialSummary}`)
+            this.recordEvent({ type: 'team_completed', summary: finalSummary, archivePath, timestamp: Date.now() })
+            this.opts.onComplete?.(finalSummary, { archivePath })
+          }).catch((err) => {
+            const archiveError = err instanceof Error ? err.message : String(err)
+            const finalSummary = `(partial) ${partialSummary}`
+            this.recordEvent({ type: 'team_completed', summary: finalSummary, archiveError, timestamp: Date.now() })
+            this.opts.onComplete?.(finalSummary, { archiveError })
           })
         } else {
           this.recordEvent({ type: 'team_failed', error: `Team idle for ${Math.floor(idleMs / 1000)}s with no completed tasks`, timestamp: Date.now() })
@@ -1095,17 +1100,18 @@ export class TeamRuntime {
     // Archive workspace; don't block completion if archive fails
     this.workspace.archive()
       .then(archivePath => {
-        const finalSummary = archivePath ? `${summary}\n\nArchived to: ${archivePath}` : summary
-        this.recordEvent({ type: 'team_completed', summary: finalSummary, timestamp: Date.now() })
-        this.opts.onComplete?.(finalSummary)
+        this.recordEvent({ type: 'team_completed', summary, archivePath, timestamp: Date.now() })
+        this.opts.onComplete?.(summary, { archivePath })
       })
       .catch(err => {
+        const archiveError = err instanceof Error ? err.message : String(err)
         this.recordEvent({
           type: 'team_completed',
-          summary: `${summary}\n\n(archive failed: ${err instanceof Error ? err.message : String(err)})`,
+          summary,
+          archiveError,
           timestamp: Date.now(),
         })
-        this.opts.onComplete?.(summary)
+        this.opts.onComplete?.(summary, { archiveError })
       })
   }
 
@@ -1403,4 +1409,3 @@ function buildWorkerTaskPrompt(args: WorkerTaskPromptArgs): string {
 
   return sections.join('\n\n')
 }
-
