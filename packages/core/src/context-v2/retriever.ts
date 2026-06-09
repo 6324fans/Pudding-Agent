@@ -18,6 +18,7 @@ export interface RetrieveContextFactsOptions {
 
 const KIND_PRIORITIES: Record<ContextFactKind, number> = {
   project: 18,
+  repo_wiki: 17,
   code: 16,
   git: 12,
   conversation: 10,

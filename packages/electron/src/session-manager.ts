@@ -786,6 +786,10 @@ export class SessionManager {
     const inspectedAt = Date.now()
     const store = contextV2.createContextFactStore({ cwd: meta.cwd })
     let storedFacts = await store.listFacts({ limit: 200 })
+    const appConfig = loadAppConfig()
+    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki ?? appConfig.experimentalContextEngine ?? appConfig.experimental?.contextEngine)
+    const provider = session?.getProvider()
+    const modelConfig = session?.config.modelConfig
 
     const providerResult = await contextV2.collectContextProviderFacts({
       cwd: meta.cwd,
@@ -800,6 +804,18 @@ export class SessionManager {
       })),
     }, {
       conversation: { maxMessages: 4 },
+      repoWiki: repoWikiEnabled ? {
+        store,
+        ...(provider && modelConfig ? {
+          modelClient: contextV2.createProviderRepoWikiModelClient(provider),
+          modelConfig,
+          model: {
+            providerProtocol: provider.name,
+            modelId: modelConfig.model,
+            ...(modelConfig.modelProfile?.id ? { modelProfileId: modelConfig.modelProfile.id } : {}),
+          },
+        } : {}),
+      } : false,
     })
 
     let savedFactCount = 0
@@ -1235,11 +1251,27 @@ function buildProviderHealth(input: {
 
   const modelConfig = input.session?.config.modelConfig
   const providerName = input.session?.getProvider().name
+  const repoWikiDiagnostics = providerDiagnostics.filter((message) => message.includes('Repo Wiki'))
+  const repoWikiSummary = repoWikiDiagnostics.map(parseRepoWikiSummaryDiagnostic).find((summary): summary is NonNullable<ReturnType<typeof parseRepoWikiSummaryDiagnostic>> => Boolean(summary))
+  const repoWikiFacts = bySource('context-v2-repo-wiki-provider')
 
   return [
     sourceItem('project', 'Project provider', 'context-v2-project-provider', providerDiagnostics.filter((message) => message.includes('README') || message.includes('package'))),
     sourceItem('git', 'Git provider', 'context-v2-git-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('git'))),
     sourceItem('conversation', 'Conversation provider', 'context-v2-conversation-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('conversation'))),
+    {
+      id: 'repo_wiki',
+      label: 'Repo Wiki provider',
+      status: repoWikiSummary && repoWikiSummary.staleEntries > 0 ? 'warning' : (repoWikiFacts.length > 0 || (repoWikiSummary?.activeEntries ?? 0) > 0 ? 'ok' : (repoWikiDiagnostics.length > 0 ? 'warning' : 'warning')),
+      factCount: repoWikiSummary?.activeEntries ?? repoWikiFacts.length,
+      diagnostics: repoWikiDiagnostics.filter((message) => !message.startsWith('Repo Wiki summary')),
+      updatedAt: latestFactUpdatedAt(repoWikiFacts, input.inspectedAt),
+      details: {
+        activeEntries: repoWikiSummary?.activeEntries ?? repoWikiFacts.length,
+        staleEntries: repoWikiSummary?.staleEntries ?? 0,
+        rejectedEntries: repoWikiSummary?.rejectedEntries ?? 0,
+      },
+    },
     {
       id: 'store',
       label: 'Stored facts',
@@ -1280,4 +1312,14 @@ function buildProviderHealth(input: {
 
 function latestFactUpdatedAt(facts: contextV2.ContextFact[], fallback: number): number {
   return facts.reduce((latest, fact) => Math.max(latest, fact.updatedAt), fallback)
+}
+
+function parseRepoWikiSummaryDiagnostic(message: string): { activeEntries: number; staleEntries: number; rejectedEntries: number } | null {
+  const match = message.match(/^Repo Wiki summary active=(\d+) stale=(\d+) rejected=(\d+)$/)
+  if (!match) return null
+  return {
+    activeEntries: Number(match[1]),
+    staleEntries: Number(match[2]),
+    rejectedEntries: Number(match[3]),
+  }
 }
