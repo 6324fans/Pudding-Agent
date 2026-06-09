@@ -494,6 +494,7 @@ export class Session {
 
     const appConfig = loadAppConfig()
     const codegraphSegment = getCodegraphPromptSegment(this.config.cwd)
+    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki ?? appConfig.experimentalContextEngine ?? appConfig.experimental?.contextEngine)
     this.config.modelConfig.systemPrompt = await assembleSystemPrompt({
       cwd: this.config.cwd,
       toolDefs,
@@ -513,6 +514,12 @@ export class Session {
         tokenBudget: 900,
         maxFacts: 8,
         excludeKinds: codegraphSegment.segment ? ['code'] : undefined,
+        repoWiki: repoWikiEnabled ? {
+          modelProvider: this.provider,
+          modelConfig: this.config.modelConfig,
+          providerProtocol: this.provider.name,
+          modelProfileId: this.config.modelConfig.modelProfile?.id,
+        } : false,
       })
       if (contextV2Segment) {
         this.config.modelConfig.systemPrompt.push(contextV2Segment)

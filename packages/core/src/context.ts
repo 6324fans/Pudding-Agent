@@ -5,9 +5,10 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import os from 'node:os'
 import { getBasePrompt } from './base-prompt.js'
-import { collectContextProviderFacts, createContextFactStore, formatContextSection, retrieveContextFacts } from './context-v2/index.js'
+import { collectContextProviderFacts, createContextFactStore, createProviderRepoWikiModelClient, formatContextSection, retrieveContextFacts } from './context-v2/index.js'
+import type { ModelProvider } from './model-provider.js'
 import type { ContextFactKind } from './context-v2/index.js'
-import type { Message, ToolDefinition, PromptSegment } from './types.js'
+import type { Message, ModelConfig, ToolDefinition, PromptSegment } from './types.js'
 
 const execFileAsync = promisify(execFile)
 const CONFIG_DIR = path.join(os.homedir(), '.puddingagent')
@@ -33,7 +34,16 @@ export interface ContextV2PromptOptions {
   excludeKinds?: ContextFactKind[]
   includeProviders?: boolean
   includeConversationProvider?: boolean
+  repoWiki?: false | ContextV2RepoWikiOptions
   now?: () => number
+}
+
+export interface ContextV2RepoWikiOptions {
+  enabled?: boolean
+  modelProvider?: ModelProvider
+  modelConfig?: ModelConfig
+  providerProtocol?: string
+  modelProfileId?: string
 }
 
 export async function loadProjectMd(cwd: string): Promise<string | null> {
@@ -162,6 +172,7 @@ export async function loadContextV2PromptSegment(opts: ContextV2PromptOptions): 
     now: opts.now,
   }, {
     conversation: opts.includeConversationProvider ? { maxMessages: 4 } : false,
+    repoWiki: repoWikiProviderOptions(opts, store),
   })).facts
 
   const retrieved = retrieveContextFacts({
@@ -176,6 +187,24 @@ export async function loadContextV2PromptSegment(opts: ContextV2PromptOptions): 
   return {
     content: formatContextSection(retrieved.section),
     cacheable: false,
+  }
+}
+
+function repoWikiProviderOptions(opts: ContextV2PromptOptions, store: ReturnType<typeof createContextFactStore>) {
+  if (!opts.repoWiki || opts.repoWiki.enabled === false) return false
+  const modelProvider = opts.repoWiki.modelProvider
+  const modelConfig = opts.repoWiki.modelConfig
+  return {
+    store,
+    ...(modelProvider && modelConfig ? {
+      modelClient: createProviderRepoWikiModelClient(modelProvider),
+      modelConfig,
+      model: {
+        providerProtocol: opts.repoWiki.providerProtocol ?? modelProvider.name,
+        modelId: modelConfig.model,
+        ...(opts.repoWiki.modelProfileId ? { modelProfileId: opts.repoWiki.modelProfileId } : {}),
+      },
+    } : {}),
   }
 }
 

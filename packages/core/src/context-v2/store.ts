@@ -1,9 +1,19 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { getConfigDir } from '../config.js'
-import type { ContextFact, ContextFactQuery, ContextFactStoreFile } from './types.js'
+import type {
+  ContextFact,
+  ContextFactQuery,
+  ContextFactStoreFile,
+  RepoWikiEntry,
+  RepoWikiEntryKind,
+  RepoWikiEntryQuery,
+  RepoWikiEntryStatus,
+  RepoWikiInvalidationResult,
+  RepoWikiSummary,
+} from './types.js'
 
-export const CONTEXT_V2_STORE_VERSION = 1
+export const CONTEXT_V2_STORE_VERSION = 2
 
 export interface ContextFactStoreOptions {
   cwd: string
@@ -96,6 +106,112 @@ export class ContextFactStore {
     return next
   }
 
+  async saveRepoWikiEntries(entries: RepoWikiEntry[]): Promise<{ savedEntries: number; diagnostics: string[] }> {
+    const file = await this.readStoreFile()
+    const diagnostics: string[] = []
+    let savedEntries = 0
+
+    for (const entry of entries) {
+      const normalized = normalizeRepoWikiEntry(entry, this.projectKey, this.now)
+      const validation = validateRepoWikiEntry(normalized)
+      if (validation) {
+        diagnostics.push(validation)
+        continue
+      }
+
+      const existingIndex = file.repoWikiEntries.findIndex((item) => item.id === normalized.id)
+      if (existingIndex >= 0) {
+        file.repoWikiEntries[existingIndex] = normalized
+      } else {
+        file.repoWikiEntries.push(normalized)
+      }
+      savedEntries += 1
+    }
+
+    await this.writeStoreFile(file)
+    return { savedEntries, diagnostics }
+  }
+
+  async listRepoWikiEntries(query: RepoWikiEntryQuery = {}): Promise<RepoWikiEntry[]> {
+    const file = await this.readStoreFile()
+    const kindSet = query.kinds ? new Set(query.kinds) : null
+    const relatedFile = query.relatedFile ? normalizeRef(query.relatedFile) : null
+    const relatedSymbol = query.relatedSymbol?.toLowerCase()
+
+    let entries = file.repoWikiEntries.filter((entry) => {
+      if (entry.projectKey !== this.projectKey) return false
+      if (!query.includeArchived && entry.status === 'archived') return false
+      if (!query.includeRejected && entry.status === 'rejected') return false
+      if (!query.includeStale && (entry.status === 'stale' || entry.freshness === 'stale')) return false
+      if (kindSet && !kindSet.has(entry.kind)) return false
+      if (relatedFile) {
+        const refs = new Set([
+          ...entry.relatedFiles.map(normalizeRef),
+          ...entry.citations.map((citation) => normalizeRef(citation.ref)),
+        ])
+        if (!refs.has(relatedFile)) return false
+      }
+      if (relatedSymbol && !entry.relatedSymbols.some((symbol) => symbol.toLowerCase() === relatedSymbol)) return false
+      return true
+    })
+
+    entries = entries.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+    return query.limit === undefined ? entries : entries.slice(0, query.limit)
+  }
+
+  async getRepoWikiSummary(): Promise<RepoWikiSummary> {
+    const file = await this.readStoreFile()
+    const entries = file.repoWikiEntries.filter((entry) => entry.projectKey === this.projectKey)
+    const activeEntries = entries.filter((entry) => entry.status === 'active' && entry.freshness !== 'stale').length
+    const staleEntries = entries.filter((entry) => entry.status === 'stale' || entry.freshness === 'stale').length
+    const rejectedEntries = entries.filter((entry) => entry.status === 'rejected').length
+    const latest = entries.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0]
+
+    return {
+      activeEntries,
+      staleEntries,
+      rejectedEntries,
+      ...(latest ? { lastGeneratedAt: latest.updatedAt, lastModelId: latest.generatedBy.modelId } : {}),
+      ...(latest?.lifecycleReason ? { lastDiagnostic: latest.lifecycleReason } : {}),
+      summaries: entries
+        .slice()
+        .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+        .slice(0, 12)
+        .map((entry) => ({
+          id: entry.id,
+          kind: entry.kind,
+          title: entry.title,
+          status: entry.status,
+          summary: entry.summary ?? summarizeRepoWikiEntry(entry),
+          updatedAt: entry.updatedAt,
+        })),
+    }
+  }
+
+  async invalidateRepoWikiByFileHash(filePath: string, hash: string): Promise<RepoWikiInvalidationResult> {
+    const file = await this.readStoreFile()
+    const normalizedFile = normalizeRef(filePath)
+    let invalidatedEntries = 0
+
+    file.repoWikiEntries = file.repoWikiEntries.map((entry) => {
+      if (entry.projectKey !== this.projectKey) return entry
+      if (entry.status !== 'active' && entry.status !== 'stale') return entry
+      const hasCitation = entry.citations.some((citation) => normalizeRef(citation.ref) === normalizedFile && citation.hash && citation.hash !== hash)
+      if (!hasCitation) return entry
+      invalidatedEntries += 1
+      return {
+        ...entry,
+        status: 'stale',
+        freshness: 'stale',
+        updatedAt: this.now(),
+        lifecycleReason: `Citation hash changed for ${filePath}`,
+      }
+    })
+
+    if (invalidatedEntries > 0) await this.writeStoreFile(file)
+    return { invalidatedEntries }
+  }
+
   private async readStoreFile(): Promise<ContextFactStoreFile> {
     try {
       const parsed = JSON.parse(await readFile(this.storePath, 'utf-8')) as unknown
@@ -113,6 +229,7 @@ export class ContextFactStore {
       projectKey: this.projectKey,
       updatedAt: this.now(),
       facts: file.facts.filter((fact) => fact.projectKey === this.projectKey),
+      repoWikiEntries: file.repoWikiEntries.filter((entry) => entry.projectKey === this.projectKey),
     }
     await mkdir(path.dirname(this.storePath), { recursive: true })
     const tmpPath = `${this.storePath}.${process.pid}.${Date.now()}.tmp`
@@ -147,6 +264,7 @@ function emptyStoreFile(projectKey: string, updatedAt: number): ContextFactStore
     projectKey,
     updatedAt,
     facts: [],
+    repoWikiEntries: [],
   }
 }
 
@@ -158,6 +276,7 @@ function migrateStoreFile(raw: unknown, projectKey: string, now: () => number): 
       projectKey,
       updatedAt,
       facts: raw.map((fact) => normalizeFact(fact, projectKey, now)),
+      repoWikiEntries: [],
     }
   }
 
@@ -175,6 +294,9 @@ function migrateStoreFile(raw: unknown, projectKey: string, now: () => number): 
     projectKey,
     updatedAt: typeof candidate.updatedAt === 'number' ? candidate.updatedAt : updatedAt,
     facts: candidate.facts.map((fact) => normalizeFact(fact, projectKey, now)),
+    repoWikiEntries: Array.isArray(candidate.repoWikiEntries)
+      ? candidate.repoWikiEntries.map((entry) => normalizeRepoWikiEntry(entry, projectKey, now))
+      : [],
   }
 }
 
@@ -182,7 +304,7 @@ function normalizeFact(raw: unknown, projectKey: string, now: () => number): Con
   const fact = raw && typeof raw === 'object' ? raw as Partial<ContextFact> : {}
   const createdAt = typeof fact.createdAt === 'number' ? fact.createdAt : now()
   const updatedAt = typeof fact.updatedAt === 'number' ? fact.updatedAt : createdAt
-  const kind = fact.kind === 'code' || fact.kind === 'git' || fact.kind === 'conversation' ? fact.kind : 'project'
+  const kind = fact.kind === 'code' || fact.kind === 'git' || fact.kind === 'conversation' || fact.kind === 'repo_wiki' ? fact.kind : 'project'
   const scope = fact.scope === 'session' || fact.scope === 'turn' ? fact.scope : 'project'
 
   return {
@@ -200,4 +322,60 @@ function normalizeFact(raw: unknown, projectKey: string, now: () => number): Con
     updatedAt,
     ...(typeof fact.expiresAt === 'number' ? { expiresAt: fact.expiresAt } : {}),
   }
+}
+
+const REPO_WIKI_KINDS: RepoWikiEntryKind[] = ['architecture', 'module_boundary', 'entrypoint', 'workflow', 'testing', 'convention', 'release', 'constraint']
+const REPO_WIKI_STATUSES: RepoWikiEntryStatus[] = ['active', 'stale', 'archived', 'rejected']
+
+function normalizeRepoWikiEntry(raw: unknown, projectKey: string, now: () => number): RepoWikiEntry {
+  const entry = raw && typeof raw === 'object' ? raw as Partial<RepoWikiEntry> : {}
+  const createdAt = typeof entry.createdAt === 'number' ? entry.createdAt : now()
+  const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : createdAt
+  const kind = typeof entry.kind === 'string' && (REPO_WIKI_KINDS as string[]).includes(entry.kind) ? entry.kind as RepoWikiEntryKind : 'architecture'
+  const status = typeof entry.status === 'string' && (REPO_WIKI_STATUSES as string[]).includes(entry.status) ? entry.status as RepoWikiEntryStatus : 'active'
+  const freshness = entry.freshness === 'stale' || status === 'stale' ? 'stale' : 'cached'
+  const generatedBy = entry.generatedBy && typeof entry.generatedBy === 'object' ? entry.generatedBy : {}
+  const typedGeneratedBy = generatedBy as Partial<RepoWikiEntry['generatedBy']>
+
+  return {
+    id: typeof entry.id === 'string' && entry.id ? entry.id : `repo-wiki-${createdAt}`,
+    projectKey,
+    kind,
+    title: typeof entry.title === 'string' && entry.title ? entry.title : 'Repo Wiki Entry',
+    content: typeof entry.content === 'string' ? entry.content : '',
+    ...(typeof entry.summary === 'string' && entry.summary ? { summary: entry.summary } : {}),
+    citations: Array.isArray(entry.citations) ? entry.citations : [],
+    relatedFiles: Array.isArray(entry.relatedFiles) ? entry.relatedFiles.filter((value): value is string => typeof value === 'string' && value.length > 0) : [],
+    relatedSymbols: Array.isArray(entry.relatedSymbols) ? entry.relatedSymbols.filter((value): value is string => typeof value === 'string' && value.length > 0) : [],
+    confidence: typeof entry.confidence === 'number' ? Math.max(0, Math.min(1, entry.confidence)) : 0.7,
+    freshness,
+    generatedBy: {
+      providerProtocol: typeof typedGeneratedBy.providerProtocol === 'string' && typedGeneratedBy.providerProtocol ? typedGeneratedBy.providerProtocol : 'unknown',
+      modelId: typeof typedGeneratedBy.modelId === 'string' && typedGeneratedBy.modelId ? typedGeneratedBy.modelId : 'unknown',
+      ...(typeof typedGeneratedBy.modelProfileId === 'string' && typedGeneratedBy.modelProfileId ? { modelProfileId: typedGeneratedBy.modelProfileId } : {}),
+    },
+    evidenceHash: typeof entry.evidenceHash === 'string' ? entry.evidenceHash : '',
+    status,
+    createdAt,
+    updatedAt,
+    ...(typeof entry.archivedAt === 'number' ? { archivedAt: entry.archivedAt } : {}),
+    ...(typeof entry.lifecycleReason === 'string' && entry.lifecycleReason ? { lifecycleReason: entry.lifecycleReason } : {}),
+  }
+}
+
+function validateRepoWikiEntry(entry: RepoWikiEntry): string | null {
+  if (!entry.title.trim()) return `Rejected Repo Wiki entry ${entry.id}: title is required.`
+  if (!entry.content.trim()) return `Rejected Repo Wiki entry ${entry.id}: content is required.`
+  if (entry.status === 'active' && entry.citations.length === 0) return `Rejected Repo Wiki entry ${entry.id}: active entries require citations.`
+  if (entry.confidence <= 0 || entry.confidence > 1) return `Rejected Repo Wiki entry ${entry.id}: confidence must be > 0 and <= 1.`
+  return null
+}
+
+function summarizeRepoWikiEntry(entry: RepoWikiEntry): string {
+  const compact = entry.content.replace(/\s+/g, ' ').trim()
+  return compact.length > 220 ? `${compact.slice(0, 217)}...` : compact
+}
+
+function normalizeRef(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
 }
