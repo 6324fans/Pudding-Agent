@@ -10,6 +10,18 @@ export interface AgentTypeDefinition {
   maxTurns: number
 }
 
+const CONTEXT_ENGINE_TOOLS = [
+  'Context',
+  'ContextSearch',
+  'ContextNode',
+  'ContextCallers',
+  'ContextCallees',
+  'ContextImpact',
+  'ContextTrace',
+  'ContextExplore',
+  'ContextFiles',
+]
+
 export const AGENT_TYPES: AgentTypeDefinition[] = [
   {
     name: 'explore',
@@ -36,8 +48,8 @@ export const AGENT_TYPES: AgentTypeDefinition[] = [
 # Hard rules
 - Read-only. Do NOT modify any files.
 - Do NOT run state-changing commands.`,
-    allowedTools: ['file_read', 'glob', 'grep', 'ls', 'tree', 'web_search', 'web_fetch', 'lsp'],
-    allowedMcpServers: ['codegraph'],
+    allowedTools: ['file_read', 'glob', 'grep', 'ls', 'tree', 'web_search', 'web_fetch', 'lsp', ...CONTEXT_ENGINE_TOOLS],
+    allowedMcpServers: [],
     maxTurns: 25,
   },
   {
@@ -63,8 +75,8 @@ export const AGENT_TYPES: AgentTypeDefinition[] = [
 - Do NOT implement anything — write plans only.
 - Do NOT write outside .puddingagent/plans/.
 - A plan that says "refactor X" without naming files is rejected — be specific.`,
-    allowedTools: ['file_read', 'glob', 'grep', 'ls', 'tree', 'file_write'],
-    allowedMcpServers: ['codegraph'],
+    allowedTools: ['file_read', 'glob', 'grep', 'ls', 'tree', 'file_write', ...CONTEXT_ENGINE_TOOLS],
+    allowedMcpServers: [],
     maxTurns: 20,
   },
   {
@@ -91,8 +103,8 @@ export const AGENT_TYPES: AgentTypeDefinition[] = [
 - Do NOT run shell commands.
 - Do NOT add features.
 - Do NOT change formatting that's already consistent — only change what makes the code clearer.`,
-    allowedTools: ['file_read', 'file_edit', 'file_write', 'grep', 'glob', 'ls'],
-    allowedMcpServers: ['codegraph'],
+    allowedTools: ['file_read', 'file_edit', 'file_write', 'grep', 'glob', 'ls', ...CONTEXT_ENGINE_TOOLS],
+    allowedMcpServers: [],
     maxTurns: 30,
   },
   {
@@ -133,8 +145,8 @@ Order by severity: critical > high > medium > low. End with a one-paragraph summ
 - Do NOT fix code — only report.
 - Bash is restricted to read-only commands (grep, find, cat, git log, npm audit, etc.).
 - Do not file findings you cannot pinpoint to a file:line. "The codebase might have XSS" is not a finding.`,
-    allowedTools: ['file_read', 'grep', 'glob', 'ls', 'tree', 'bash'],
-    allowedMcpServers: ['codegraph'],
+    allowedTools: ['file_read', 'grep', 'glob', 'ls', 'tree', 'bash', ...CONTEXT_ENGINE_TOOLS],
+    allowedMcpServers: [],
     maxTurns: 20,
   },
   {

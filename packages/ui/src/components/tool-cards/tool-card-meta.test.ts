@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { getToolCardKind, getToolFamily, formatToolLabel } from './tool-card-meta'
+import {
+  formatToolLabel,
+  getToolCardKind,
+  getToolFamily,
+  missingRequiredArgumentMessage,
+} from './tool-card-meta'
 
 describe('tool-card-meta', () => {
   it('classifies Pudding snake_case tool names', () => {
@@ -23,5 +28,12 @@ describe('tool-card-meta', () => {
   it('formats labels without introducing a JDC family', () => {
     expect(getToolFamily('gitnexus_query')).toBe('context')
     expect(formatToolLabel('team_add_task')).toBe('TEAM ADD TASK')
+  })
+
+  it('localizes missing required argument errors', () => {
+    expect(missingRequiredArgumentMessage('Error: file_path is required')).toBe('缺少文件路径')
+    expect(missingRequiredArgumentMessage('Error: pattern is required')).toBe('缺少搜索条件')
+    expect(missingRequiredArgumentMessage('Error: workspace_id is required')).toBe('缺少必填参数 workspace_id')
+    expect(missingRequiredArgumentMessage('Error: invalid regex')).toBeNull()
   })
 })

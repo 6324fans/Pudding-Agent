@@ -25,10 +25,6 @@ export interface WebToolConfig {
   webSearch: WebSearchConfig
 }
 
-export interface ExperimentalConfig {
-  contextEngine?: boolean
-}
-
 export function loadAppConfig(): Record<string, any> {
   if (!existsSync(CONFIG_FILE)) {
     return {}
@@ -65,13 +61,6 @@ export function loadWebToolConfig(): WebToolConfig {
       ...(config.webSearch || {}),
       ...normalizedWebSearchProvider(config.webSearch?.provider),
     },
-  }
-}
-
-export function loadExperimentalConfig(): ExperimentalConfig {
-  const config = loadAppConfig()
-  return {
-    contextEngine: Boolean(config.experimentalContextEngine ?? config.experimental?.contextEngine),
   }
 }
 

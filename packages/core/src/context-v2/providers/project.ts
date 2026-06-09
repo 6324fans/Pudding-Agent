@@ -29,7 +29,7 @@ export async function collectProjectFacts(request: ContextProviderRequest): Prom
   }
 
   if (facts.length === 0) {
-    diagnostics.push('No README, AGENTS, PUDDINGAGENT, or package.json files were found.')
+    diagnostics.push('未找到 README、AGENTS、PUDDINGAGENT 或 package.json 文件。')
   }
 
   return { facts, diagnostics }
@@ -76,11 +76,11 @@ function packageJsonFact(request: ContextProviderRequest, ref: string, content: 
       : []
 
     const lines = [
-      `package: ${typeof parsed.name === 'string' ? parsed.name : 'unknown'}`,
-      ...(typeof parsed.version === 'string' ? [`version: ${parsed.version}`] : []),
-      scripts.length > 0 ? `scripts: ${scripts.join(', ')}` : 'scripts: none',
-      deps.length > 0 ? `dependencies: ${deps.slice(0, 40).join(', ')}` : 'dependencies: none',
-      devDeps.length > 0 ? `devDependencies: ${devDeps.slice(0, 40).join(', ')}` : 'devDependencies: none',
+      `包名: ${typeof parsed.name === 'string' ? parsed.name : 'unknown'}`,
+      ...(typeof parsed.version === 'string' ? [`版本: ${parsed.version}`] : []),
+      scripts.length > 0 ? `脚本: ${scripts.join(', ')}` : '脚本: 无',
+      deps.length > 0 ? `依赖: ${deps.slice(0, 40).join(', ')}` : '依赖: 无',
+      devDeps.length > 0 ? `开发依赖: ${devDeps.slice(0, 40).join(', ')}` : '开发依赖: 无',
     ]
 
     return makeFact(request, {
@@ -93,12 +93,12 @@ function packageJsonFact(request: ContextProviderRequest, ref: string, content: 
       confidence: 0.9,
     })
   } catch (error) {
-    diagnostics.push(`Could not parse ${ref}: ${error instanceof Error ? error.message : String(error)}`)
+    diagnostics.push(`无法解析 ${ref}: ${error instanceof Error ? error.message : String(error)}`)
     return makeFact(request, {
       kind: 'project',
       source: SOURCE,
       title: ref,
-      content: `${ref} exists but could not be parsed as JSON.`,
+      content: `${ref} 存在，但无法按 JSON 解析。`,
       citations: [fileCitation(ref)],
       tags: ['project', 'package'],
       confidence: 0.4,

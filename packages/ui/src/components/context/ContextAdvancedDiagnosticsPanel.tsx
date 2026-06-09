@@ -31,14 +31,14 @@ export function ContextAdvancedDiagnosticsPanel({ inspect, refresh, onReloadDiag
             disabled={refresh.loading}
             className="rounded-[6px] border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-left text-[11px] text-[var(--text)] hover:border-[var(--accent)] disabled:opacity-60"
           >
-            {refresh.loading ? '刷新中' : '刷新 provider'}
+            {refresh.loading ? '刷新中' : '刷新来源'}
           </button>
         </div>
 
         {refresh.error && <PanelState title="刷新失败" message={refresh.error} />}
         {refresh.data && (
           <div className="grid grid-cols-2 gap-2">
-            <Metric label="保存 facts" value={refresh.data.savedFactCount} />
+            <Metric label="保存事实" value={refresh.data.savedFactCount} />
             <Metric label="刷新时间" value={formatTime(refresh.data.refreshedAt)} />
           </div>
         )}
@@ -56,29 +56,29 @@ function ProviderHealthList({ providers, loading, error }: {
   loading: boolean
   error: string | null
 }) {
-  if (loading) return <PanelState title="正在读取 provider" message="Context diagnostics" />
-  if (error) return <PanelState title="Provider 暂不可用" message={error} />
-  if (!providers) return <PanelState title="暂无 provider 状态" message="Context diagnostics" />
+  if (loading) return <PanelState title="正在读取上下文来源" message="上下文诊断" />
+  if (error) return <PanelState title="上下文来源暂不可用" message={error} />
+  if (!providers) return <PanelState title="暂无上下文来源状态" message="上下文诊断" />
 
   return (
     <section className="space-y-2">
-      <PanelHeader title="Provider health" />
+      <PanelHeader title="上下文来源健康度" />
       {providers.map((provider) => (
         <article key={provider.id} className="min-w-0 rounded-[6px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <div className="break-words text-[12px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">{provider.label}</div>
-              <div className="mt-0.5 break-words text-[10px] uppercase tracking-[0.08em] text-[var(--muted)] [overflow-wrap:anywhere]">
-                {provider.id} · {provider.factCount} facts · {formatTime(provider.updatedAt)}
+              <div className="break-words text-[12px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">{providerLabel(provider.label)}</div>
+              <div className="mt-0.5 break-words text-[10px] tracking-[0.08em] text-[var(--muted)] [overflow-wrap:anywhere]">
+                {providerIdLabel(provider.id)} · {provider.factCount} 条事实 · {formatTime(provider.updatedAt)}
               </div>
             </div>
-            <StatusPill tone={toneForStatus(provider.status)}>{provider.status}</StatusPill>
+            <StatusPill tone={toneForStatus(provider.status)}>{statusLabel(provider.status)}</StatusPill>
           </div>
 
           {provider.details && (
             <div className="mt-2 grid gap-1.5 [grid-template-columns:repeat(auto-fit,minmax(90px,1fr))]">
               {Object.entries(provider.details).map(([key, value]) => (
-                <Metric key={key} label={key} value={value == null ? '无' : String(value)} />
+                <Metric key={key} label={detailKeyLabel(key)} value={formatDetailValue(value)} />
               ))}
             </div>
           )}
@@ -103,10 +103,10 @@ function MemoryReview({ snapshot }: { snapshot: ContextInspectSnapshot | null })
 
   return (
     <section className="space-y-2">
-      <PanelHeader title="Memory review" />
+      <PanelHeader title="记忆检查" />
       <div className="grid grid-cols-2 gap-2">
-        <Metric label="Memory" value={snapshot.memoryReview.available ? 'ready' : 'empty'} />
-        <Metric label="Project facts" value={snapshot.memoryReview.storedProjectFacts.length} />
+        <Metric label="记忆" value={snapshot.memoryReview.available ? '就绪' : '为空'} />
+        <Metric label="项目事实" value={snapshot.memoryReview.storedProjectFacts.length} />
       </div>
       <div className="break-all rounded-[6px] border border-[var(--border)] bg-[var(--bg)] px-2.5 py-2 font-mono text-[10px] text-[var(--muted)]">
         {snapshot.memoryReview.memoryDir}
@@ -121,7 +121,7 @@ function DiagnosticsList({ diagnostics }: { diagnostics: string[] }) {
   if (unique.length === 0) return null
   return (
     <section className="space-y-2">
-      <PanelHeader title="Diagnostics" />
+      <PanelHeader title="诊断信息" />
       <ul className="space-y-1">
         {unique.map((diagnostic) => (
           <li key={diagnostic} className="break-words text-[11px] text-[var(--warn)] [overflow-wrap:anywhere]">
@@ -138,6 +138,58 @@ function toneForStatus(status: ContextProviderHealthItem['status']): 'good' | 'w
   if (status === 'warning') return 'warn'
   if (status === 'error') return 'bad'
   return 'muted'
+}
+
+function statusLabel(status: ContextProviderHealthItem['status']): string {
+  switch (status) {
+    case 'ok': return '正常'
+    case 'warning': return '警告'
+    case 'error': return '错误'
+    case 'disabled': return '已禁用'
+    default: return status
+  }
+}
+
+function providerLabel(label: string): string {
+  switch (label) {
+    case 'Repo Wiki provider': return '仓库 Wiki 来源'
+    case 'Stored facts': return '已存事实'
+    case 'Memory review': return '记忆检查'
+    case 'Active model': return '当前模型'
+    default: return label.replace(/\bprovider\b/gi, '来源').replace(/\bfacts\b/gi, '事实')
+  }
+}
+
+function providerIdLabel(id: string): string {
+  switch (id) {
+    case 'repo-wiki': return '仓库 Wiki'
+    case 'stored-facts': return '已存事实'
+    case 'memory': return '记忆'
+    case 'active-model': return '当前模型'
+    default: return id
+  }
+}
+
+function detailKeyLabel(key: string): string {
+  switch (key) {
+    case 'activeEntries': return '可用条目'
+    case 'staleEntries': return '过期条目'
+    case 'rejectedEntries': return '已拒绝条目'
+    case 'storedFacts': return '已存事实'
+    case 'available': return '可用'
+    case 'lineCount': return '行数'
+    case 'provider': return '提供方'
+    case 'model': return '模型'
+    case 'modelProfileId': return '模型配置'
+    default: return key
+  }
+}
+
+function formatDetailValue(value: string | number | boolean | null): string {
+  if (value == null) return '无'
+  if (value === true) return '是'
+  if (value === false) return '否'
+  return String(value)
 }
 
 function formatTime(timestamp: number): string {

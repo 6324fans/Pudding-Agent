@@ -13,7 +13,6 @@ import { webFetchTool } from './web-fetch.js'
 import { webSearchTool } from './web-search.js'
 import { weatherTool } from './weather.js'
 import { createContextEngineTools } from './context-engine-tools.js'
-import { loadExperimentalConfig } from '../config.js'
 import { lspTool } from './lsp.js'
 import { createPowerShellTool } from './powershell.js'
 import { findGitBash, findPowerShell } from '../utils/shell-detection.js'
@@ -48,10 +47,8 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
   registry.register(webFetchTool)
   registry.register(webSearchTool)
   registry.register(weatherTool)
-  if (loadExperimentalConfig().contextEngine) {
-    for (const tool of createContextEngineTools()) {
-      registry.register(tool)
-    }
+  for (const tool of createContextEngineTools()) {
+    registry.register(tool)
   }
   registry.register(lspTool)
 }

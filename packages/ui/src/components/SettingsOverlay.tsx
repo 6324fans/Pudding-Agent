@@ -5,7 +5,6 @@ import { useModelStore, type ApiProtocol, type ModelGroup } from '../stores/mode
 import { useSessionStore } from '../stores/session-store'
 import { ThemeSegmented } from './ThemeSegmented'
 import { IconCheck, IconStop, IconX } from './icons'
-import { useCodegraph } from '../hooks/useCodegraph'
 import { ipc, type ChatBridgeEvent, type ChatBridgeRouteState, type ChatBridgeSnapshot, type ChatChannelConfig, type ChatChannelState, type MarketplacePlugin, type McpServerState, type PluginMarketplace, type SkillListItem } from '../lib/ipc-client'
 
 function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
@@ -179,7 +178,6 @@ function ToolsTab() {
   const [proxyEnabled, setProxyEnabled] = useState(false)
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyUseEnv, setProxyUseEnv] = useState(true)
-  const [experimentalContextEngine, setExperimentalContextEngine] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -196,7 +194,6 @@ function ToolsTab() {
       setProxyEnabled(Boolean(wp.enabled || ws.proxy))
       setProxyUrl(wp.url || ws.proxy || '')
       setProxyUseEnv(wp.useEnv !== false)
-      setExperimentalContextEngine(Boolean(cfg?.experimentalContextEngine ?? cfg?.experimental?.contextEngine))
     }).catch(() => undefined)
   }, [])
 
@@ -216,7 +213,6 @@ function ToolsTab() {
           url: proxyUrl.trim() || undefined,
           useEnv: proxyUseEnv,
         },
-        experimentalContextEngine,
       } as any)
       setSaved(true)
       setTimeout(() => setSaved(false), 1800)
@@ -283,18 +279,6 @@ function ToolsTab() {
             未填写地址时读取环境变量
           </label>
         </div>
-      </div>
-
-      <div>
-        <h3 className="text-[13px] font-medium text-[var(--text)] mb-3">实验能力</h3>
-        <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
-          <input
-            type="checkbox"
-            checked={experimentalContextEngine}
-            onChange={(e) => setExperimentalContextEngine(e.target.checked)}
-          />
-          启用 Context Engine 只读代码工具
-        </label>
       </div>
 
       <div className="flex items-center gap-3">
@@ -1613,7 +1597,6 @@ function McpTab() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const activeProject = projects.find((p) => p.sessions.some((s) => s.id === activeSessionId))
   const cwd = activeProject?.cwd || ''
-  const codegraph = useCodegraph(cwd)
 
   const loadServers = useCallback(async () => {
     setLoading(true)
@@ -1692,7 +1675,7 @@ function McpTab() {
       <div className="flex items-center justify-between pr-8">
         <div>
           <h3 className="text-[13px] font-medium text-[var(--text)]">MCP</h3>
-          <p className="mt-1 text-[12px] text-[var(--muted)]">管理 MCP 服务器和项目代码索引能力。</p>
+          <p className="mt-1 text-[12px] text-[var(--muted)]">管理 MCP 服务器。</p>
         </div>
         <button
           type="button"
@@ -1715,37 +1698,6 @@ function McpTab() {
         />
       )}
 
-      {/* CodeGraph index */}
-      {cwd && (
-        <div className="flex items-center justify-between px-3 py-2.5 border border-[var(--border)] rounded-[6px]">
-          <div>
-            <span className="text-[13px] text-[var(--text)]">CodeGraph 索引</span>
-            <span className="text-[11px] text-[var(--muted)] ml-2">
-              {codegraph.status === 'indexing'
-                ? (codegraph.progress || '正在索引当前项目')
-                : codegraph.status === 'ready'
-                  ? '重建当前项目的代码索引'
-                  : codegraph.status === 'error'
-                    ? (codegraph.error || '索引失败，可重试')
-                    : '为当前项目建立代码索引'}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={codegraph.run}
-            disabled={codegraph.status === 'indexing'}
-            className="px-3 py-1 text-[12px] rounded-[6px] border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)] transition-colors disabled:opacity-50"
-          >
-            {codegraph.status === 'indexing'
-              ? '索引中...'
-              : codegraph.status === 'ready'
-                ? '重建索引'
-                : codegraph.status === 'error'
-                  ? '重试'
-                  : '建立索引'}
-          </button>
-        </div>
-      )}
       {servers.length === 0 && <p className="text-[13px] text-[var(--muted)] text-center py-4">暂无 MCP 服务器配置</p>}
       {servers.map((server) => (
         <div key={server.name} className="border border-[var(--border)] rounded-[6px] overflow-hidden">

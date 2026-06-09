@@ -60,7 +60,18 @@ const TASK_TOOLS = new Set([
   'team_report',
   'todo_write',
 ])
-const CONTEXT_TOOLS = new Set(['codegraph', 'gitnexus'])
+const CONTEXT_TOOLS = new Set([
+  'Context',
+  'ContextSearch',
+  'ContextNode',
+  'ContextCallers',
+  'ContextCallees',
+  'ContextImpact',
+  'ContextTrace',
+  'ContextExplore',
+  'ContextFiles',
+  'gitnexus',
+])
 
 export function deriveToolStatus(
   event?: ToolEventLike,
@@ -142,4 +153,17 @@ export function formatToolLabel(toolName: string): string {
 
 export function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value)
+}
+
+const MISSING_REQUIRED_ARGUMENT_MESSAGES: Record<string, string> = {
+  file_path: '缺少文件路径',
+  pattern: '缺少搜索条件',
+  command: '缺少命令',
+  query: '缺少查询内容',
+}
+
+export function missingRequiredArgumentMessage(content: string): string | null {
+  const match = /^Error:\s+([A-Za-z0-9_]+)\s+is required\b/.exec(content.trim())
+  if (!match) return null
+  return MISSING_REQUIRED_ARGUMENT_MESSAGES[match[1]] || `缺少必填参数 ${match[1]}`
 }

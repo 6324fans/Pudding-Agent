@@ -9,6 +9,7 @@ import { collectContextProviderFacts, createContextFactStore, createProviderRepo
 import type { ModelProvider } from './model-provider.js'
 import type { ContextFactKind } from './context-v2/index.js'
 import type { Message, ModelConfig, ToolDefinition, PromptSegment } from './types.js'
+import { getContextEnginePromptSegment } from './context-engine/index.js'
 
 const execFileAsync = promisify(execFile)
 const CONFIG_DIR = path.join(os.homedir(), '.puddingagent')
@@ -275,6 +276,12 @@ You can run tasks in the background:
 
 You can check running tasks with \`task_output\` tool, or wait for the notification.`,
     cacheable: true,
+  })
+
+  const contextEngineSegment = getContextEnginePromptSegment()
+  segments.push({
+    content: contextEngineSegment.segment,
+    cacheable: contextEngineSegment.cacheable,
   })
 
   // Memory

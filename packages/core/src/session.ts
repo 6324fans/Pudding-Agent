@@ -7,7 +7,6 @@ import { ToolRunner, type ToolExecutionEvent, type PermissionCallback } from './
 import { registerBuiltinTools } from './tools/index.js'
 import { ConversationHistory } from './history.js'
 import { assembleSystemPrompt, getMemoryDir, loadContextV2PromptSegment } from './context.js'
-import { getCodegraphPromptSegment } from './codegraph/index.js'
 import { loadAppConfig, getConfigDir } from './config.js'
 import { PermissionChecker } from './permissions.js'
 import { TaskStore } from './task-store.js'
@@ -493,8 +492,7 @@ export class Session {
       .map(s => ({ name: s.name, toolCount: s.tools.length, tools: s.tools.map(t => t.name), instructions: s.instructions }))
 
     const appConfig = loadAppConfig()
-    const codegraphSegment = getCodegraphPromptSegment(this.config.cwd)
-    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki ?? appConfig.experimentalContextEngine ?? appConfig.experimental?.contextEngine)
+    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki)
     this.config.modelConfig.systemPrompt = await assembleSystemPrompt({
       cwd: this.config.cwd,
       toolDefs,
@@ -513,7 +511,6 @@ export class Session {
         recentMessages: this.messages,
         tokenBudget: 900,
         maxFacts: 8,
-        excludeKinds: codegraphSegment.segment ? ['code'] : undefined,
         repoWiki: repoWikiEnabled ? {
           modelProvider: this.provider,
           modelConfig: this.config.modelConfig,
@@ -556,14 +553,6 @@ export class Session {
           cacheable: false,
         })
       }
-    }
-
-    // Inject codegraph prompt segment when project has .codegraph/
-    if (codegraphSegment.segment && Array.isArray(this.config.modelConfig.systemPrompt)) {
-      this.config.modelConfig.systemPrompt.push({
-        content: codegraphSegment.segment,
-        cacheable: codegraphSegment.cacheable,
-      })
     }
 
     const content: import('./types.js').ContentBlock[] = [{ type: 'text', text }]

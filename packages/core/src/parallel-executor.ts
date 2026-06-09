@@ -19,6 +19,8 @@ const READ_TOOLS = new Set([
   'web_fetch', 'web_search', 'weather', 'lsp',
   'task_get', 'task_list', 'task_stop',
   'list_mcp_resources', 'read_mcp_resource', 'skill', 'skill_list', 'Skill',
+  'Context', 'ContextSearch', 'ContextNode', 'ContextCallers', 'ContextCallees',
+  'ContextImpact', 'ContextTrace', 'ContextExplore', 'ContextFiles',
 ])
 
 const LONG_RUNNING_TOOLS = new Set(['Agent', 'bash', 'monitor'])

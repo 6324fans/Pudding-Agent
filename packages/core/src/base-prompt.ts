@@ -150,13 +150,14 @@ function getToolUsageSection(toolNames: string[]): string {
 
   const items: string[] = [
     'Do NOT use bash to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work.',
+    'Never call a tool with missing required arguments or an empty argument object. If you do not know the required value yet, first discover it with an appropriate tool or ask the user.',
   ]
 
-  if (hasFileRead) items.push('To read files, use file_read instead of cat, head, or tail.')
+  if (hasFileRead) items.push('To read files, use file_read instead of cat, head, or tail. file_read requires a non-empty file_path; do not call file_read with {}.')
   if (hasFileEdit) items.push('To edit files, use file_edit instead of sed or awk.')
   if (hasFileWrite) items.push('To create new files, use file_write instead of echo redirection.')
-  if (hasGlob) items.push('To search for files by name pattern, use glob instead of find.')
-  if (hasGrep) items.push('To search file contents, use grep instead of shell grep or rg.')
+  if (hasGlob) items.push('To search for files by name pattern, use glob instead of find. glob requires a non-empty pattern, such as "**/*.ts".')
+  if (hasGrep) items.push('To search file contents, use grep instead of shell grep or rg. grep requires a non-empty pattern; if you only need to list files, use glob or ls first.')
   if (hasBash) items.push('Reserve bash exclusively for system commands and terminal operations that require shell execution.')
 
   if (hasAgent) {
@@ -174,6 +175,7 @@ function getToolUsageSection(toolNames: string[]): string {
   items.push(
     'You can call multiple tools in a single response. If there are no dependencies between calls, make all independent calls in parallel for efficiency.',
     'If some tool calls depend on previous results, run them sequentially — do NOT use placeholder values.',
+    'Before submitting tool calls, mentally validate every required field against the tool schema. A tool call with {} is almost always wrong.',
   )
 
   return `# Using Your Tools\n\n${items.map(i => `- ${i}`).join('\n')}`
