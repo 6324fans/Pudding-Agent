@@ -6,7 +6,7 @@ import { ToolRegistry } from './tool-registry.js'
 import { ToolRunner, type ToolExecutionEvent, type PermissionCallback } from './tool-runner.js'
 import { registerBuiltinTools } from './tools/index.js'
 import { ConversationHistory } from './history.js'
-import { assembleSystemPrompt, getMemoryDir } from './context.js'
+import { assembleSystemPrompt, getMemoryDir, loadContextV2PromptSegment } from './context.js'
 import { getCodegraphPromptSegment } from './codegraph/index.js'
 import { loadAppConfig, getConfigDir } from './config.js'
 import { PermissionChecker } from './permissions.js'
@@ -493,6 +493,7 @@ export class Session {
       .map(s => ({ name: s.name, toolCount: s.tools.length, tools: s.tools.map(t => t.name), instructions: s.instructions }))
 
     const appConfig = loadAppConfig()
+    const codegraphSegment = getCodegraphPromptSegment(this.config.cwd)
     this.config.modelConfig.systemPrompt = await assembleSystemPrompt({
       cwd: this.config.cwd,
       toolDefs,
@@ -502,6 +503,21 @@ export class Session {
       language: appConfig.language,
       customInstructions: appConfig.customInstructions,
     })
+
+    if (Array.isArray(this.config.modelConfig.systemPrompt)) {
+      const contextV2Segment = await loadContextV2PromptSegment({
+        cwd: this.config.cwd,
+        sessionId: this.id,
+        userMessage: text,
+        recentMessages: this.messages,
+        tokenBudget: 900,
+        maxFacts: 8,
+        excludeKinds: codegraphSegment.segment ? ['code'] : undefined,
+      })
+      if (contextV2Segment) {
+        this.config.modelConfig.systemPrompt.push(contextV2Segment)
+      }
+    }
 
     // Inject active tasks into context
     const activeTasks = this.history.getActiveTasks(this.id)
@@ -536,7 +552,6 @@ export class Session {
     }
 
     // Inject codegraph prompt segment when project has .codegraph/
-    const codegraphSegment = getCodegraphPromptSegment(this.config.cwd)
     if (codegraphSegment.segment && Array.isArray(this.config.modelConfig.systemPrompt)) {
       this.config.modelConfig.systemPrompt.push({
         content: codegraphSegment.segment,

@@ -5,7 +5,9 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import os from 'node:os'
 import { getBasePrompt } from './base-prompt.js'
-import type { ToolDefinition, PromptSegment } from './types.js'
+import { collectContextProviderFacts, createContextFactStore, formatContextSection, retrieveContextFacts } from './context-v2/index.js'
+import type { ContextFactKind } from './context-v2/index.js'
+import type { Message, ToolDefinition, PromptSegment } from './types.js'
 
 const execFileAsync = promisify(execFile)
 const CONFIG_DIR = path.join(os.homedir(), '.puddingagent')
@@ -19,6 +21,19 @@ export interface ContextOptions {
   skills?: { name: string; description: string; argumentHint?: string; trigger?: string }[]
   language?: string
   customInstructions?: string
+}
+
+export interface ContextV2PromptOptions {
+  cwd: string
+  sessionId?: string
+  userMessage: string
+  recentMessages?: Message[]
+  tokenBudget?: number
+  maxFacts?: number
+  excludeKinds?: ContextFactKind[]
+  includeProviders?: boolean
+  includeConversationProvider?: boolean
+  now?: () => number
 }
 
 export async function loadProjectMd(cwd: string): Promise<string | null> {
@@ -129,6 +144,38 @@ async function getGitInfo(cwd: string): Promise<{ branch?: string; status?: stri
     }
   } catch {
     return {}
+  }
+}
+
+export async function loadContextV2PromptSegment(opts: ContextV2PromptOptions): Promise<PromptSegment | null> {
+  const store = createContextFactStore({ cwd: opts.cwd, now: opts.now })
+  const storedFacts = await store.listFacts({
+    excludeKinds: opts.excludeKinds,
+    limit: 200,
+  })
+  const providerFacts = opts.includeProviders === false ? [] : (await collectContextProviderFacts({
+    cwd: opts.cwd,
+    projectKey: store.projectKey,
+    sessionId: opts.sessionId,
+    userMessage: opts.userMessage,
+    recentMessages: opts.recentMessages,
+    now: opts.now,
+  }, {
+    conversation: opts.includeConversationProvider ? { maxMessages: 4 } : false,
+  })).facts
+
+  const retrieved = retrieveContextFacts({
+    userMessage: opts.userMessage,
+    facts: [...storedFacts, ...providerFacts],
+    maxFacts: opts.maxFacts,
+    tokenBudget: opts.tokenBudget,
+    excludeKinds: opts.excludeKinds,
+    now: opts.now,
+  })
+  if (!retrieved.section) return null
+  return {
+    content: formatContextSection(retrieved.section),
+    cacheable: false,
   }
 }
 
