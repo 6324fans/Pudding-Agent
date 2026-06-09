@@ -155,6 +155,10 @@ export interface ChatBridgeSnapshot {
   events: ChatBridgeEvent[]
 }
 
+export interface ExperimentalConfig {
+  experimentalContextEngine?: boolean
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -347,7 +351,7 @@ export const ipc = {
 
   config: {
     get: () =>
-      invoke('config:get') as Promise<AppConfig>,
+      invoke('config:get') as Promise<AppConfig & ExperimentalConfig>,
     set: (config: Partial<AppConfig>) =>
       invoke('config:set', config) as Promise<{ success: boolean }>,
   },

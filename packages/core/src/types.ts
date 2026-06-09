@@ -183,6 +183,7 @@ export const AppConfigSchema = z.object({
   ollamaEndpoint: z.string().default('http://localhost:11434'),
   defaultModel: z.string().default('claude-sonnet-4-6'),
   theme: z.enum(['dark', 'light']).default('dark'),
+  experimentalContextEngine: z.boolean().default(false),
 })
 
 export type AppConfig = z.infer<typeof AppConfigSchema>

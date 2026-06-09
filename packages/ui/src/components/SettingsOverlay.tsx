@@ -179,6 +179,7 @@ function ToolsTab() {
   const [proxyEnabled, setProxyEnabled] = useState(false)
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyUseEnv, setProxyUseEnv] = useState(true)
+  const [experimentalContextEngine, setExperimentalContextEngine] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -195,6 +196,7 @@ function ToolsTab() {
       setProxyEnabled(Boolean(wp.enabled || ws.proxy))
       setProxyUrl(wp.url || ws.proxy || '')
       setProxyUseEnv(wp.useEnv !== false)
+      setExperimentalContextEngine(Boolean(cfg?.experimentalContextEngine ?? cfg?.experimental?.contextEngine))
     }).catch(() => undefined)
   }, [])
 
@@ -214,6 +216,7 @@ function ToolsTab() {
           url: proxyUrl.trim() || undefined,
           useEnv: proxyUseEnv,
         },
+        experimentalContextEngine,
       } as any)
       setSaved(true)
       setTimeout(() => setSaved(false), 1800)
@@ -280,6 +283,18 @@ function ToolsTab() {
             未填写地址时读取环境变量
           </label>
         </div>
+      </div>
+
+      <div>
+        <h3 className="text-[13px] font-medium text-[var(--text)] mb-3">实验能力</h3>
+        <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
+          <input
+            type="checkbox"
+            checked={experimentalContextEngine}
+            onChange={(e) => setExperimentalContextEngine(e.target.checked)}
+          />
+          启用 Context Engine 只读代码工具
+        </label>
       </div>
 
       <div className="flex items-center gap-3">
