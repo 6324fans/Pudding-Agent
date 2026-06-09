@@ -1,4 +1,13 @@
-import type { AppConfig, Message, StreamChunk, ToolExecutionEvent } from '@puddingagent/core'
+import type {
+  AppConfig,
+  ChangedFileRecord,
+  Message,
+  PolicyEvent,
+  StreamChunk,
+  ToolExecutionEvent,
+  VerificationCommandRecord,
+  VerificationRequirementRecord,
+} from '@puddingagent/core'
 
 export interface CodegraphState {
   cwd: string
@@ -157,6 +166,110 @@ export interface ChatBridgeSnapshot {
 
 export interface ExperimentalConfig {
   experimentalContextEngine?: boolean
+}
+
+export type ContextProviderStatus = 'ok' | 'warning' | 'error' | 'disabled'
+
+export interface ContextCitation {
+  id?: string
+  type: 'file' | 'code' | 'git' | 'message' | 'package'
+  ref: string
+  line?: number
+  excerpt?: string
+  timestamp?: number
+}
+
+export interface ContextFact {
+  id: string
+  projectKey: string
+  kind: 'project' | 'code' | 'git' | 'conversation'
+  scope: 'project' | 'session' | 'turn'
+  content: string
+  citations: ContextCitation[]
+  source: string
+  title?: string
+  tags?: string[]
+  confidence?: number
+  createdAt: number
+  updatedAt: number
+  expiresAt?: number
+}
+
+export interface ContextSection {
+  id: string
+  title: string
+  content: string
+  facts: ContextFact[]
+  citations: ContextCitation[]
+  tokenEstimate: number
+}
+
+export interface ContextProviderHealthItem {
+  id: string
+  label: string
+  status: ContextProviderStatus
+  factCount: number
+  diagnostics: string[]
+  updatedAt: number
+  details?: Record<string, string | number | boolean | null>
+}
+
+export interface ContextInspectSnapshot {
+  status: 'ready' | 'unavailable'
+  sessionId: string
+  cwd: string
+  inspectedAt: number
+  query: string
+  current: {
+    section: ContextSection | null
+    facts: Array<{
+      fact: ContextFact
+      score: number
+      reasons: string[]
+      tokenEstimate: number
+    }>
+    usedTokens: number
+    droppedTokens: number
+    storedFactCount: number
+    providerFactCount: number
+  }
+  providerHealth: ContextProviderHealthItem[]
+  memoryReview: {
+    memoryDir: string
+    available: boolean
+    lineCount: number
+    preview: string
+    storedProjectFacts: ContextFact[]
+  }
+  diagnostics: string[]
+  refresh?: {
+    status: 'ready' | 'unavailable'
+    refreshedAt: number
+    savedFactCount: number
+    diagnostics: string[]
+  }
+}
+
+export interface ContextRefreshSnapshot {
+  status: 'ready' | 'unavailable'
+  sessionId: string
+  cwd: string
+  refreshedAt: number
+  savedFactCount: number
+  diagnostics: string[]
+  inspect: ContextInspectSnapshot
+}
+
+export interface VerificationInspectSnapshot {
+  status: 'ready' | 'unavailable'
+  sessionId: string
+  cwd: string
+  inspectedAt: number
+  changedFiles: ChangedFileRecord[]
+  commands: VerificationCommandRecord[]
+  requirements: VerificationRequirementRecord[]
+  policyEvents: PolicyEvent[]
+  diagnostics: string[]
 }
 
 declare global {
@@ -389,6 +502,18 @@ export const ipc = {
       invoke('chat-bridge:save-project', { project }) as Promise<ChatBridgeSnapshot>,
     onStateChanged: (cb: (snapshot: ChatBridgeSnapshot) => void) =>
       on('chat-bridge:state-changed', (_e, data) => cb(data as ChatBridgeSnapshot)),
+  },
+
+  context: {
+    inspect: (sessionId: string, userMessage?: string) =>
+      invoke('context:inspect', { sessionId, userMessage }) as Promise<ContextInspectSnapshot>,
+    refresh: (sessionId: string, userMessage?: string) =>
+      invoke('context:refresh', { sessionId, userMessage }) as Promise<ContextRefreshSnapshot>,
+  },
+
+  verification: {
+    inspect: (sessionId: string) =>
+      invoke('verification:inspect', { sessionId }) as Promise<VerificationInspectSnapshot>,
   },
 
   dialog: {

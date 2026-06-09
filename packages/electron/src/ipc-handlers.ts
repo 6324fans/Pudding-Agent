@@ -16,6 +16,20 @@ interface DevToolServices {
   chatBridgeService: ChatBridgeService
 }
 
+function ipcPayload(payload: unknown): Record<string, unknown> {
+  return payload && typeof payload === 'object' ? payload as Record<string, unknown> : {}
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+function requiredSessionId(payload: unknown): string {
+  const sessionId = optionalString(ipcPayload(payload).sessionId)
+  if (!sessionId) throw new Error('sessionId is required')
+  return sessionId
+}
+
 export function registerIpcHandlers(sessionManager: SessionManager, services: DevToolServices): void {
   ipcMain.on('permission:response', (_event, { id, allowed }) => {
     sessionManager.respondToPermission(id, allowed)
@@ -67,6 +81,24 @@ export function registerIpcHandlers(sessionManager: SessionManager, services: De
 
   ipcMain.handle(IPC_CHANNELS.SESSION_GET_MODEL, async (_event, { sessionId }) => {
     return { modelId: sessionManager.getSessionModel(sessionId) }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTEXT_INSPECT, async (_event, payload = {}) => {
+    const input = ipcPayload(payload)
+    return sessionManager.inspectContext(requiredSessionId(input), {
+      userMessage: optionalString(input.userMessage),
+    })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CONTEXT_REFRESH, async (_event, payload = {}) => {
+    const input = ipcPayload(payload)
+    return sessionManager.refreshContext(requiredSessionId(input), {
+      userMessage: optionalString(input.userMessage),
+    })
+  })
+
+  ipcMain.handle(IPC_CHANNELS.VERIFICATION_INSPECT, async (_event, payload = {}) => {
+    return sessionManager.inspectVerification(requiredSessionId(payload))
   })
 
   ipcMain.handle(IPC_CHANNELS.QUERY_SEND, async (_event, { sessionId, text, images }) => {

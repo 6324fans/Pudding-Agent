@@ -57,6 +57,11 @@ export const IPC_CHANNELS = {
   SESSION_SET_MODEL: 'session:set-model',
   SESSION_GET_MODEL: 'session:get-model',
 
+  // Context diagnostics
+  CONTEXT_INSPECT: 'context:inspect',
+  CONTEXT_REFRESH: 'context:refresh',
+  VERIFICATION_INSPECT: 'verification:inspect',
+
   // Git
   GIT_BRANCH_LIST: 'git:branch-list',
   GIT_BRANCH_SWITCH: 'git:branch-switch',

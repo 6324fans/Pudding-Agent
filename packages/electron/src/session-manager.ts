@@ -8,7 +8,10 @@ import {
   McpManager, loadMcpConfig, saveMcpConfig, type McpServerConfig, type McpServerState,
   IdeManager, type IdeConnection, type OpenDiffParams, type OpenDiffResult, type DiagnosticFile,
   codegraph, compressImageForAPI, resolveConfiguredModel, resolveModelCapabilityProfile,
-  type RuntimeModelResolution, type ResolvedConfiguredModel,
+  contextV2, getMemoryDir, loadMemoryIndex,
+  type RuntimeModelResolution, type ResolvedConfiguredModel, type Message,
+  type SafetyPolicyRuntime, type PolicyEvent,
+  type ChangedFileRecord, type VerificationCommandRecord, type VerificationRequirementRecord,
 } from '@puddingagent/core'
 import type { ToolExecutionEvent } from '@puddingagent/core'
 import { Notification, shell, type BrowserWindow } from 'electron'
@@ -24,6 +27,78 @@ export interface PendingPermissionInfo {
 
 export interface ResolvedPermissionInfo extends PendingPermissionInfo {
   allowed: boolean
+}
+
+type ContextProviderStatus = 'ok' | 'warning' | 'error' | 'disabled'
+
+interface ContextProviderHealthItem {
+  id: string
+  label: string
+  status: ContextProviderStatus
+  factCount: number
+  diagnostics: string[]
+  updatedAt: number
+  details?: Record<string, string | number | boolean | null>
+}
+
+interface ContextRefreshSummary {
+  status: 'ready' | 'unavailable'
+  refreshedAt: number
+  savedFactCount: number
+  diagnostics: string[]
+}
+
+export interface ContextInspectSnapshot {
+  status: 'ready' | 'unavailable'
+  sessionId: string
+  cwd: string
+  inspectedAt: number
+  query: string
+  current: {
+    section: contextV2.ContextSection | null
+    facts: Array<{
+      fact: contextV2.ContextFact
+      score: number
+      reasons: string[]
+      tokenEstimate: number
+    }>
+    usedTokens: number
+    droppedTokens: number
+    storedFactCount: number
+    providerFactCount: number
+  }
+  providerHealth: ContextProviderHealthItem[]
+  memoryReview: {
+    memoryDir: string
+    available: boolean
+    lineCount: number
+    preview: string
+    storedProjectFacts: contextV2.ContextFact[]
+  }
+  diagnostics: string[]
+  refresh?: ContextRefreshSummary
+}
+
+export interface ContextRefreshSnapshot {
+  status: 'ready' | 'unavailable'
+  sessionId: string
+  cwd: string
+  refreshedAt: number
+  savedFactCount: number
+  diagnostics: string[]
+  inspect: ContextInspectSnapshot
+}
+
+export interface VerificationInspectSnapshot {
+  status: 'ready' | 'unavailable'
+  sessionId: string
+  cwd: string
+  inspectedAt: number
+  changedFiles: ChangedFileRecord[]
+  commands: VerificationCommandRecord[]
+  requirements: VerificationRequirementRecord[]
+  policyEvents: PolicyEvent[]
+  diagnostics: string[]
 }
 
 export class SessionManager {
@@ -216,6 +291,10 @@ export class SessionManager {
 
   getSessionModel(sessionId: string): string | null {
     return this.history.getSessionModel(sessionId)
+  }
+
+  getSessionCwd(sessionId: string): string | null {
+    return this.history.listSessions().find(s => s.id === sessionId)?.cwd ?? null
   }
 
   async activateSession(sessionId: string): Promise<void> {
@@ -638,6 +717,160 @@ export class SessionManager {
     return session.getUsageSnapshot()
   }
 
+  async inspectContext(sessionId: string, options: { userMessage?: string } = {}): Promise<ContextInspectSnapshot> {
+    return this.buildContextInspectSnapshot(sessionId, options)
+  }
+
+  async refreshContext(sessionId: string, options: { userMessage?: string } = {}): Promise<ContextRefreshSnapshot> {
+    const inspect = await this.buildContextInspectSnapshot(sessionId, { ...options, persistProjectProviderFacts: true })
+    const refresh = inspect.refresh ?? {
+      status: inspect.status,
+      refreshedAt: inspect.inspectedAt,
+      savedFactCount: 0,
+      diagnostics: inspect.diagnostics,
+    }
+    return {
+      status: refresh.status,
+      sessionId,
+      cwd: inspect.cwd,
+      refreshedAt: refresh.refreshedAt,
+      savedFactCount: refresh.savedFactCount,
+      diagnostics: refresh.diagnostics,
+      inspect,
+    }
+  }
+
+  inspectVerification(sessionId: string): VerificationInspectSnapshot {
+    const meta = this.getSessionMetaOrThrow(sessionId)
+    const session = this.sessions.get(sessionId)
+    const runtime = getSafetyRuntime(session)
+    if (!runtime?.verificationLedger) {
+      return {
+        status: 'unavailable',
+        sessionId,
+        cwd: meta.cwd,
+        inspectedAt: Date.now(),
+        changedFiles: [],
+        commands: [],
+        requirements: [],
+        policyEvents: [],
+        diagnostics: ['Verification ledger is only available after the session is active.'],
+      }
+    }
+
+    const policyEvents = runtime.policyEvents
+      ? runtime.policyEvents.list().filter((event) => event.decision === 'warn' || event.decision === 'block')
+      : []
+
+    return {
+      status: 'ready',
+      sessionId,
+      cwd: meta.cwd,
+      inspectedAt: Date.now(),
+      changedFiles: runtime.verificationLedger.getChangedFiles(),
+      commands: runtime.verificationLedger.getCommands(),
+      requirements: runtime.verificationLedger.getRequirements(),
+      policyEvents,
+      diagnostics: [],
+    }
+  }
+
+  private async buildContextInspectSnapshot(
+    sessionId: string,
+    options: { userMessage?: string; persistProjectProviderFacts?: boolean } = {},
+  ): Promise<ContextInspectSnapshot> {
+    const meta = this.getSessionMetaOrThrow(sessionId)
+    const session = this.sessions.get(sessionId)
+    const messages = session?.getMessages() ?? this.history.getMessages(sessionId)
+    const query = normalizeInspectQuery(options.userMessage ?? latestUserText(messages))
+    const inspectedAt = Date.now()
+    const store = contextV2.createContextFactStore({ cwd: meta.cwd })
+    let storedFacts = await store.listFacts({ limit: 200 })
+
+    const providerResult = await contextV2.collectContextProviderFacts({
+      cwd: meta.cwd,
+      projectKey: store.projectKey,
+      sessionId,
+      userMessage: query,
+      recentMessages: messages.slice(-8).map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp,
+      })),
+    }, {
+      conversation: { maxMessages: 4 },
+    })
+
+    let savedFactCount = 0
+    if (options.persistProjectProviderFacts) {
+      for (const fact of providerResult.facts) {
+        if (fact.scope !== 'project') continue
+        await store.saveFact(fact)
+        savedFactCount += 1
+      }
+      storedFacts = await store.listFacts({ limit: 200 })
+    }
+
+    const retrieval = contextV2.retrieveContextFacts({
+      userMessage: query,
+      facts: [...storedFacts, ...providerResult.facts],
+      maxFacts: 8,
+      tokenBudget: 900,
+    })
+
+    const memoryIndex = await loadMemoryIndex(meta.cwd)
+    const diagnostics = dedupeStrings(providerResult.diagnostics)
+    const snapshot: ContextInspectSnapshot = {
+      status: 'ready',
+      sessionId,
+      cwd: meta.cwd,
+      inspectedAt,
+      query,
+      current: {
+        section: retrieval.section,
+        facts: retrieval.facts,
+        usedTokens: retrieval.usedTokens,
+        droppedTokens: retrieval.droppedTokens,
+        storedFactCount: storedFacts.length,
+        providerFactCount: providerResult.facts.length,
+      },
+      providerHealth: buildProviderHealth({
+        storedFacts,
+        providerFacts: providerResult.facts,
+        providerDiagnostics: providerResult.diagnostics,
+        session,
+        inspectedAt,
+        memoryAvailable: Boolean(memoryIndex),
+      }),
+      memoryReview: {
+        memoryDir: getMemoryDir(meta.cwd),
+        available: Boolean(memoryIndex),
+        lineCount: memoryIndex ? memoryIndex.split('\n').length : 0,
+        preview: memoryIndex ? memoryIndex.slice(0, 4000) : '',
+        storedProjectFacts: storedFacts.filter((fact) => fact.scope === 'project').slice(0, 25),
+      },
+      diagnostics,
+    }
+
+    if (options.persistProjectProviderFacts) {
+      snapshot.refresh = {
+        status: 'ready',
+        refreshedAt: inspectedAt,
+        savedFactCount,
+        diagnostics,
+      }
+    }
+
+    return snapshot
+  }
+
+  private getSessionMetaOrThrow(sessionId: string) {
+    const meta = this.history.listSessions().find(s => s.id === sessionId)
+    if (!meta) throw new Error(`Session ${sessionId} not found`)
+    return meta
+  }
+
   getFileChanges(sessionId: string) {
     const session = this.sessions.get(sessionId)
     if (!session) return []
@@ -930,4 +1163,121 @@ export class SessionManager {
     saveAppConfig({ ...cfg, dismissedCodegraphForCwds: list })
     this.evaluateCodegraphState(cwd)
   }
+}
+
+function getSafetyRuntime(session: Session | undefined): SafetyPolicyRuntime | undefined {
+  return (session as unknown as { toolRunner?: { safetyRuntime?: SafetyPolicyRuntime } } | undefined)
+    ?.toolRunner
+    ?.safetyRuntime
+}
+
+function normalizeInspectQuery(value: string): string {
+  const trimmed = value.trim()
+  return trimmed || 'current project context diagnostics'
+}
+
+function latestUserText(messages: Message[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.role !== 'user') continue
+    const text = textFromContentBlocks(message.content).trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function textFromContentBlocks(content: Message['content']): string {
+  return content.flatMap((block) => {
+    if (block.type === 'text') return [block.text]
+    if (block.type === 'tool_result') return [block.content]
+    return []
+  }).join('\n')
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = value.trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+  return result
+}
+
+function buildProviderHealth(input: {
+  storedFacts: contextV2.ContextFact[]
+  providerFacts: contextV2.ContextFact[]
+  providerDiagnostics: string[]
+  session?: Session
+  inspectedAt: number
+  memoryAvailable: boolean
+}): ContextProviderHealthItem[] {
+  const providerDiagnostics = dedupeStrings(input.providerDiagnostics)
+  const bySource = (source: string) => input.providerFacts.filter((fact) => fact.source === source)
+  const sourceItem = (
+    id: string,
+    label: string,
+    source: string,
+    diagnostics: string[] = [],
+  ): ContextProviderHealthItem => {
+    const facts = bySource(source)
+    return {
+      id,
+      label,
+      status: facts.length > 0 ? (diagnostics.length > 0 ? 'warning' : 'ok') : (diagnostics.length > 0 ? 'error' : 'warning'),
+      factCount: facts.length,
+      diagnostics,
+      updatedAt: latestFactUpdatedAt(facts, input.inspectedAt),
+    }
+  }
+
+  const modelConfig = input.session?.config.modelConfig
+  const providerName = input.session?.getProvider().name
+
+  return [
+    sourceItem('project', 'Project provider', 'context-v2-project-provider', providerDiagnostics.filter((message) => message.includes('README') || message.includes('package'))),
+    sourceItem('git', 'Git provider', 'context-v2-git-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('git'))),
+    sourceItem('conversation', 'Conversation provider', 'context-v2-conversation-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('conversation'))),
+    {
+      id: 'store',
+      label: 'Stored facts',
+      status: input.storedFacts.length > 0 ? 'ok' : 'warning',
+      factCount: input.storedFacts.length,
+      diagnostics: input.storedFacts.length > 0 ? [] : ['No persisted Context V2 facts are available for this project yet.'],
+      updatedAt: latestFactUpdatedAt(input.storedFacts, input.inspectedAt),
+      details: {
+        projectFacts: input.storedFacts.filter((fact) => fact.scope === 'project').length,
+        sessionFacts: input.storedFacts.filter((fact) => fact.scope === 'session').length,
+        turnFacts: input.storedFacts.filter((fact) => fact.scope === 'turn').length,
+      },
+    },
+    {
+      id: 'memory',
+      label: 'Memory review',
+      status: input.memoryAvailable ? 'ok' : 'warning',
+      factCount: input.memoryAvailable ? 1 : 0,
+      diagnostics: input.memoryAvailable ? [] : ['Project memory index has not been created yet.'],
+      updatedAt: input.inspectedAt,
+    },
+    {
+      id: 'model',
+      label: 'Active model',
+      status: input.session ? 'ok' : 'warning',
+      factCount: input.session ? 1 : 0,
+      diagnostics: input.session ? [] : ['Session is not active; model provider details are limited.'],
+      updatedAt: input.inspectedAt,
+      details: {
+        provider: providerName ?? null,
+        model: modelConfig?.model ?? null,
+        contextWindow: modelConfig?.contextWindow ?? null,
+        maxTokens: modelConfig?.maxTokens ?? null,
+      },
+    },
+  ]
+}
+
+function latestFactUpdatedAt(facts: contextV2.ContextFact[], fallback: number): number {
+  return facts.reduce((latest, fact) => Math.max(latest, fact.updatedAt), fallback)
 }
