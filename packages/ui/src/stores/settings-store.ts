@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { ipc } from '../lib/ipc-client'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
-export type SettingsTab = 'appearance' | 'models' | 'plugins' | 'skills' | 'mcp' | 'chatBridge' | 'shortcuts' | 'advanced'
+export type SettingsTab = 'appearance' | 'models' | 'plugins' | 'skills' | 'mcp' | 'tools' | 'chatBridge' | 'shortcuts' | 'advanced'
 
 interface SettingsState {
   config: any | null

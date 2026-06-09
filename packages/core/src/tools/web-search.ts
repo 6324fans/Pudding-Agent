@@ -1,11 +1,17 @@
 import { parseHTML } from 'linkedom'
-import { loadAppConfig } from '../config.js'
+import { loadWebToolConfig, type WebSearchConfig, type WebSearchProvider } from '../config.js'
 import type { ToolContext, ToolHandler, ToolResult } from '../tool-registry.js'
+import { buildWebFetchOptions, formatWebRequestError } from './web-proxy.js'
 
 interface SearchResult {
   title: string
   url: string
   description: string
+}
+
+interface ResolvedSearchProvider {
+  provider: WebSearchProvider
+  apiKey?: string
 }
 
 export const webSearchTool: ToolHandler = {
@@ -18,7 +24,7 @@ Usage notes:
 - Use this proactively for questions that require current/live information, including weather, prices, releases, and breaking news.
 - You MUST always include a "Sources:" section at the end of your response with relevant URLs as markdown links.
 - Use specific, descriptive queries rather than single keywords.
-- If Brave Search is configured it will be used; otherwise a no-key DuckDuckGo HTML fallback is used.`,
+- If a search provider is configured it will be used; otherwise a no-key DuckDuckGo HTML fallback is used.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -40,25 +46,64 @@ Usage notes:
         .join('\n\n')
       return { content: formatted || 'No results found.' }
     } catch (err: any) {
-      return { content: `Error: ${err.message}`, isError: true }
+      return { content: `Error: ${formatWebRequestError(err)}`, isError: true }
     }
   },
 }
 
 async function search(query: string, count: number, signal?: AbortSignal): Promise<SearchResult[]> {
-  const config = loadAppConfig()
-  const apiKey = (config as any)?.webSearch?.braveApiKey
-  if (apiKey) return searchBrave(query, count, apiKey, signal)
-  return searchDuckDuckGo(query, count, signal)
+  const config = loadWebToolConfig()
+  const resolved = resolveSearchProvider(config.webSearch)
+
+  switch (resolved.provider) {
+    case 'brave':
+      return searchBrave(query, count, requireApiKey(resolved, 'Brave'), config, signal)
+    case 'tavily':
+      return searchTavily(query, count, requireApiKey(resolved, 'Tavily'), config, signal)
+    case 'serper':
+      return searchSerper(query, count, requireApiKey(resolved, 'Serper'), config, signal)
+    case 'duckduckgo':
+      return searchDuckDuckGo(query, count, config, signal)
+  }
 }
 
-async function searchBrave(query: string, count: number, apiKey: string, signal?: AbortSignal): Promise<SearchResult[]> {
+function resolveSearchProvider(config: WebSearchConfig): ResolvedSearchProvider {
+  if (config.provider) {
+    return { provider: config.provider, apiKey: apiKeyForProvider(config, config.provider) }
+  }
+  if (config.braveApiKey) return { provider: 'brave', apiKey: config.braveApiKey }
+  if (config.tavilyApiKey) return { provider: 'tavily', apiKey: config.tavilyApiKey }
+  if (config.serperApiKey) return { provider: 'serper', apiKey: config.serperApiKey }
+  return { provider: 'duckduckgo' }
+}
+
+function apiKeyForProvider(config: WebSearchConfig, provider: WebSearchProvider): string | undefined {
+  if (provider === 'brave') return config.braveApiKey?.trim()
+  if (provider === 'tavily') return config.tavilyApiKey?.trim()
+  if (provider === 'serper') return config.serperApiKey?.trim()
+  return undefined
+}
+
+function requireApiKey(resolved: ResolvedSearchProvider, label: string): string {
+  const apiKey = resolved.apiKey?.trim()
+  if (!apiKey) throw new Error(`${label} Search is selected but its API key is not configured`)
+  return apiKey
+}
+
+async function searchBrave(
+  query: string,
+  count: number,
+  apiKey: string,
+  config: ReturnType<typeof loadWebToolConfig>,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`
   const response = await fetch(url, {
+    ...buildWebFetchOptions(config.webProxy),
     headers: { 'X-Subscription-Token': apiKey, 'Accept': 'application/json' },
     signal: signal || AbortSignal.timeout(15000),
   })
-  if (!response.ok) throw new Error(`Brave Search API returned ${response.status}`)
+  if (!response.ok) throw new Error(`Brave Search API returned ${response.status}: ${await readErrorBody(response)}`)
   const data = await response.json() as any
   return (data.web?.results || [])
     .map((r: any) => ({
@@ -69,13 +114,69 @@ async function searchBrave(query: string, count: number, apiKey: string, signal?
     .filter((r: SearchResult) => r.title && r.url)
 }
 
-async function searchDuckDuckGo(query: string, count: number, signal?: AbortSignal): Promise<SearchResult[]> {
+async function searchTavily(
+  query: string,
+  count: number,
+  apiKey: string,
+  config: ReturnType<typeof loadWebToolConfig>,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  const response = await fetch('https://api.tavily.com/search', {
+    ...buildWebFetchOptions(config.webProxy),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey, query, max_results: count, include_answer: false }),
+    signal: signal || AbortSignal.timeout(15000),
+  })
+  if (!response.ok) throw new Error(`Tavily Search API returned ${response.status}: ${await readErrorBody(response)}`)
+  const data = await response.json() as any
+  return (data.results || [])
+    .map((r: any) => ({
+      title: String(r.title || '').trim(),
+      url: String(r.url || '').trim(),
+      description: String(r.content || '').replace(/\s+/g, ' ').trim(),
+    }))
+    .filter((r: SearchResult) => r.title && r.url)
+}
+
+async function searchSerper(
+  query: string,
+  count: number,
+  apiKey: string,
+  config: ReturnType<typeof loadWebToolConfig>,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  const response = await fetch('https://google.serper.dev/search', {
+    ...buildWebFetchOptions(config.webProxy),
+    method: 'POST',
+    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ q: query, num: count }),
+    signal: signal || AbortSignal.timeout(15000),
+  })
+  if (!response.ok) throw new Error(`Serper Search API returned ${response.status}: ${await readErrorBody(response)}`)
+  const data = await response.json() as any
+  return (data.organic || [])
+    .map((r: any) => ({
+      title: String(r.title || '').trim(),
+      url: String(r.link || '').trim(),
+      description: String(r.snippet || '').trim(),
+    }))
+    .filter((r: SearchResult) => r.title && r.url)
+}
+
+async function searchDuckDuckGo(
+  query: string,
+  count: number,
+  config: ReturnType<typeof loadWebToolConfig>,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
   const response = await fetch(url, {
+    ...buildWebFetchOptions(config.webProxy),
     headers: { 'User-Agent': 'PUDDINGAGENT/1.0 (Desktop AI Assistant)' },
     signal: signal || AbortSignal.timeout(15000),
   })
-  if (!response.ok) throw new Error(`DuckDuckGo search returned ${response.status}`)
+  if (!response.ok) throw new Error(`DuckDuckGo search returned ${response.status}: ${await readErrorBody(response)}`)
   const html = await response.text()
   const { document } = parseHTML(html)
   const links = Array.from(document.querySelectorAll('a.result__a'))
@@ -105,4 +206,9 @@ function normalizeDuckDuckGoUrl(href: string): string {
   } catch {
     return href
   }
+}
+
+async function readErrorBody(response: Response): Promise<string> {
+  const body = await response.text().catch(() => '')
+  return body.replace(/\s+/g, ' ').trim().slice(0, 300) || response.statusText
 }

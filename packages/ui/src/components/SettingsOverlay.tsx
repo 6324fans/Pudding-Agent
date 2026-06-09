@@ -73,6 +73,7 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: 'models', label: '模型' },
   { key: 'plugins', label: '插件' },
   { key: 'mcp', label: 'MCP' },
+  { key: 'tools', label: '工具' },
   { key: 'skills', label: '技能' },
   { key: 'chatBridge', label: '聊天桥接' },
   { key: 'shortcuts', label: '快捷键' },
@@ -142,6 +143,7 @@ export function SettingsOverlay() {
           {activeTab === 'models' && <ModelsTab />}
           {activeTab === 'plugins' && <PluginsTab />}
           {activeTab === 'mcp' && <McpTab />}
+          {activeTab === 'tools' && <ToolsTab />}
           {activeTab === 'skills' && <SkillsTab />}
           {activeTab === 'chatBridge' && <ChatBridgeTab />}
           {activeTab === 'shortcuts' && <ShortcutsTab />}
@@ -160,6 +162,148 @@ function AppearanceTab() {
       <ThemeSegmented />
     </div>
   )
+}
+
+type SearchProvider = 'duckduckgo' | 'brave' | 'tavily' | 'serper'
+
+const SEARCH_PROVIDERS: { value: SearchProvider; label: string; keyField?: 'braveApiKey' | 'tavilyApiKey' | 'serperApiKey'; placeholder?: string }[] = [
+  { value: 'duckduckgo', label: 'DuckDuckGo' },
+  { value: 'brave', label: 'Brave Search', keyField: 'braveApiKey', placeholder: 'BSA...' },
+  { value: 'tavily', label: 'Tavily', keyField: 'tavilyApiKey', placeholder: 'tvly-...' },
+  { value: 'serper', label: 'Serper', keyField: 'serperApiKey', placeholder: 'Serper API Key' },
+]
+
+function ToolsTab() {
+  const [provider, setProvider] = useState<SearchProvider>('duckduckgo')
+  const [keys, setKeys] = useState<Record<string, string>>({})
+  const [proxyEnabled, setProxyEnabled] = useState(false)
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [proxyUseEnv, setProxyUseEnv] = useState(true)
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    ipc.config.get().then((cfg: any) => {
+      const ws = cfg?.webSearch || {}
+      const wp = cfg?.webProxy || {}
+      setProvider(resolveSearchProviderDraft(ws))
+      setKeys({
+        braveApiKey: ws.braveApiKey || '',
+        tavilyApiKey: ws.tavilyApiKey || '',
+        serperApiKey: ws.serperApiKey || '',
+      })
+      setProxyEnabled(Boolean(wp.enabled || ws.proxy))
+      setProxyUrl(wp.url || ws.proxy || '')
+      setProxyUseEnv(wp.useEnv !== false)
+    }).catch(() => undefined)
+  }, [])
+
+  const saveTools = async () => {
+    setSaving(true)
+    setSaved(false)
+    try {
+      await ipc.config.set({
+        webSearch: {
+          provider,
+          braveApiKey: keys.braveApiKey?.trim() || undefined,
+          tavilyApiKey: keys.tavilyApiKey?.trim() || undefined,
+          serperApiKey: keys.serperApiKey?.trim() || undefined,
+        },
+        webProxy: {
+          enabled: proxyEnabled,
+          url: proxyUrl.trim() || undefined,
+          useEnv: proxyUseEnv,
+        },
+      } as any)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 1800)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedProvider = SEARCH_PROVIDERS.find(p => p.value === provider)
+  const inputCls = 'w-full bg-[var(--surface-2)] border border-[var(--border)] rounded-[6px] px-3 py-2 text-[13px] text-[var(--text)] placeholder:text-[var(--muted)] outline-none focus:border-[var(--border-strong)]'
+  const labelCls = 'space-y-1.5 text-[12px] text-[var(--muted)]'
+
+  return (
+    <div className="space-y-6 pr-8">
+      <div>
+        <h3 className="text-[13px] font-medium text-[var(--text)] mb-3">联网搜索</h3>
+        <div className="space-y-3">
+          <label className={labelCls}>
+            搜索引擎
+            <select value={provider} onChange={(e) => setProvider(e.target.value as SearchProvider)} className={inputCls}>
+              {SEARCH_PROVIDERS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+
+          {SEARCH_PROVIDERS.filter(option => option.keyField).map(option => (
+            <label key={option.value} className={labelCls}>
+              {option.label} API Key
+              <input
+                type="password"
+                value={keys[option.keyField!] || ''}
+                onChange={(e) => setKeys(prev => ({ ...prev, [option.keyField!]: e.target.value }))}
+                placeholder={option.placeholder}
+                className={inputCls}
+              />
+            </label>
+          ))}
+
+          {selectedProvider?.keyField && !keys[selectedProvider.keyField]?.trim() && (
+            <p className="text-[11px] text-[var(--warn)]">当前搜索引擎需要配置 API Key。</p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-[13px] font-medium text-[var(--text)] mb-3">Web 代理</h3>
+        <div className="space-y-3">
+          <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
+            <input type="checkbox" checked={proxyEnabled} onChange={(e) => setProxyEnabled(e.target.checked)} />
+            启用代理
+          </label>
+          <label className={labelCls}>
+            代理地址
+            <input
+              value={proxyUrl}
+              onChange={(e) => setProxyUrl(e.target.value)}
+              placeholder="http://127.0.0.1:7890"
+              className={inputCls}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
+            <input type="checkbox" checked={proxyUseEnv} onChange={(e) => setProxyUseEnv(e.target.checked)} />
+            未填写地址时读取环境变量
+          </label>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={saveTools}
+          disabled={saving}
+          className="rounded-[6px] bg-[var(--accent)] px-4 py-2 text-[13px] text-[var(--accent-ink)] disabled:opacity-50"
+        >
+          {saving ? '保存中...' : '保存'}
+        </button>
+        {saved && <span className="text-[12px] text-[var(--good)]">已保存</span>}
+      </div>
+    </div>
+  )
+}
+
+function resolveSearchProviderDraft(webSearch: any): SearchProvider {
+  if (webSearch?.provider === 'brave' || webSearch?.provider === 'tavily' || webSearch?.provider === 'serper' || webSearch?.provider === 'duckduckgo') {
+    return webSearch.provider
+  }
+  if (webSearch?.braveApiKey) return 'brave'
+  if (webSearch?.tavilyApiKey) return 'tavily'
+  if (webSearch?.serperApiKey) return 'serper'
+  return 'duckduckgo'
 }
 
 /* ─── Advanced ─── */
