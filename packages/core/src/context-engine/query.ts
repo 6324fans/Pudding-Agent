@@ -1,5 +1,4 @@
-// Query facade for tools. Returns plain data shapes aligned with the former
-// codegraph_* tool outputs so the model's habits transfer directly.
+// Query facade for Context Engine tools.
 
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'

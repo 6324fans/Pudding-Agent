@@ -43,18 +43,18 @@ describe('agent-types', () => {
   const mcpTools: ToolDefinition[] = [
     { name: 'file_read', description: '', inputSchema: {} },
     { name: 'grep', description: '', inputSchema: {} },
-    { name: 'mcp__codegraph__codegraph_search', description: '', inputSchema: {} },
-    { name: 'mcp__codegraph__codegraph_context', description: '', inputSchema: {} },
+    { name: 'ContextSearch', description: '', inputSchema: {} },
+    { name: 'Context', description: '', inputSchema: {} },
     { name: 'mcp__other__do_thing', description: '', inputSchema: {} },
     { name: 'Agent', description: '', inputSchema: {} },
     { name: 'Skill', description: '', inputSchema: {} },
   ]
 
   describe('filterToolsForAgent — MCP whitelisting', () => {
-    it('explore allows mcp__codegraph__* but not mcp__other__*', () => {
+    it('explore allows built-in Context tools but not unrelated MCP tools', () => {
       const out = filterToolsForAgent('explore', mcpTools).map(t => t.name)
-      expect(out).toContain('mcp__codegraph__codegraph_search')
-      expect(out).toContain('mcp__codegraph__codegraph_context')
+      expect(out).toContain('ContextSearch')
+      expect(out).toContain('Context')
       expect(out).not.toContain('mcp__other__do_thing')
     })
 
@@ -65,7 +65,6 @@ describe('agent-types', () => {
 
     it('general allows all mcp__* tools', () => {
       const out = filterToolsForAgent('general', mcpTools).map(t => t.name)
-      expect(out).toContain('mcp__codegraph__codegraph_search')
       expect(out).toContain('mcp__other__do_thing')
     })
 

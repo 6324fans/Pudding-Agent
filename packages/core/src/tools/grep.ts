@@ -12,6 +12,7 @@ export const grepTool: ToolHandler = {
 
 Usage notes:
 - Always prefer this tool over running bash grep/rg. It handles rg detection, result truncation, and abort signals automatically.
+- Requires pattern. Never call this tool with an empty argument object.
 - Use the glob parameter to filter by file type (e.g. "*.ts", "*.py").
 - Results are truncated at 200 matches. Use a more specific pattern or path if you get too many results.
 - Use include_count: true to get match counts per file (useful for understanding scope before diving in).`,

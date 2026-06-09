@@ -7,7 +7,7 @@ import {
   createBrowserOpenTool,
   McpManager, loadMcpConfig, saveMcpConfig, type McpServerConfig, type McpServerState,
   IdeManager, type IdeConnection, type OpenDiffParams, type OpenDiffResult, type DiagnosticFile,
-  codegraph, compressImageForAPI, resolveConfiguredModel, resolveModelCapabilityProfile,
+  compressImageForAPI, resolveConfiguredModel, resolveModelCapabilityProfile,
   contextV2, getMemoryDir, loadMemoryIndex,
   type RuntimeModelResolution, type ResolvedConfiguredModel, type Message,
   type SafetyPolicyRuntime, type PolicyEvent,
@@ -417,7 +417,6 @@ export class SessionManager {
       })
     }
     this.sessions.set(sessionId, session)
-    this.evaluateCodegraphState(meta.cwd)
   }
 
   async sendMessage(sessionId: string, text: string, images?: { data: string; mediaType: string }[]): Promise<any | undefined> {
@@ -787,7 +786,7 @@ export class SessionManager {
     const store = contextV2.createContextFactStore({ cwd: meta.cwd })
     let storedFacts = await store.listFacts({ limit: 200 })
     const appConfig = loadAppConfig()
-    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki ?? appConfig.experimentalContextEngine ?? appConfig.experimental?.contextEngine)
+    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki)
     const provider = session?.getProvider()
     const modelConfig = session?.config.modelConfig
 
@@ -1127,58 +1126,6 @@ export class SessionManager {
     await this.reloadMcp(cwd)
   }
 
-  private getDismissedCodegraphCwds(): string[] {
-    const cfg = loadAppConfig() as { dismissedCodegraphForCwds?: string[] }
-    return Array.isArray(cfg.dismissedCodegraphForCwds) ? cfg.dismissedCodegraphForCwds : []
-  }
-
-  evaluateCodegraphState(cwd: string): void {
-    const initialized = codegraph.isInitialized(cwd)
-    const dismissed = this.getDismissedCodegraphCwds().includes(cwd)
-    this.window?.webContents.send('codegraph:project-state', { cwd, initialized, dismissed })
-  }
-
-  async runCodegraphInit(cwd: string): Promise<void> {
-    // Ensure .codegraph is in .gitignore before indexing
-    this.ensureGitignore(cwd)
-    const onLine = (line: string) => {
-      this.window?.webContents.send('codegraph:init-progress', { cwd, line })
-    }
-    await codegraph.init(cwd, onLine)
-    this.evaluateCodegraphState(cwd)
-  }
-
-  private ensureGitignore(cwd: string): void {
-    const fs = require('node:fs')
-    const path = require('node:path')
-    const gitignorePath = path.join(cwd, '.gitignore')
-    const entry = '.codegraph'
-    try {
-      if (!fs.existsSync(gitignorePath)) return
-      const content: string = fs.readFileSync(gitignorePath, 'utf-8')
-      const lines = content.split('\n').map((l: string) => l.trim())
-      if (!lines.includes(entry) && !lines.includes(entry + '/')) {
-        const suffix = content.endsWith('\n') ? '' : '\n'
-        fs.appendFileSync(gitignorePath, `${suffix}${entry}\n`)
-      }
-    } catch { /* non-critical, don't block init */ }
-  }
-
-  async runCodegraphReindex(cwd: string): Promise<void> {
-    const onLine = (line: string) => {
-      this.window?.webContents.send('codegraph:init-progress', { cwd, line })
-    }
-    await codegraph.forceReindex(cwd, onLine)
-    this.evaluateCodegraphState(cwd)
-  }
-
-  dismissCodegraphForCwd(cwd: string): void {
-    const cfg = loadAppConfig() as { dismissedCodegraphForCwds?: string[] }
-    const list = Array.isArray(cfg.dismissedCodegraphForCwds) ? [...cfg.dismissedCodegraphForCwds] : []
-    if (!list.includes(cwd)) list.push(cwd)
-    saveAppConfig({ ...cfg, dismissedCodegraphForCwds: list })
-    this.evaluateCodegraphState(cwd)
-  }
 }
 
 function getSafetyRuntime(session: Session | undefined): SafetyPolicyRuntime | undefined {
@@ -1256,12 +1203,12 @@ function buildProviderHealth(input: {
   const repoWikiFacts = bySource('context-v2-repo-wiki-provider')
 
   return [
-    sourceItem('project', 'Project provider', 'context-v2-project-provider', providerDiagnostics.filter((message) => message.includes('README') || message.includes('package'))),
-    sourceItem('git', 'Git provider', 'context-v2-git-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('git'))),
-    sourceItem('conversation', 'Conversation provider', 'context-v2-conversation-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('conversation'))),
+    sourceItem('project', '项目来源', 'context-v2-project-provider', providerDiagnostics.filter((message) => message.includes('README') || message.includes('package') || message.includes('PUDDINGAGENT'))),
+    sourceItem('git', 'Git 来源', 'context-v2-git-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('git'))),
+    sourceItem('conversation', '会话来源', 'context-v2-conversation-provider', providerDiagnostics.filter((message) => message.toLowerCase().includes('conversation') || message.includes('会话'))),
     {
       id: 'repo_wiki',
-      label: 'Repo Wiki provider',
+      label: '仓库 Wiki 来源',
       status: repoWikiSummary && repoWikiSummary.staleEntries > 0 ? 'warning' : (repoWikiFacts.length > 0 || (repoWikiSummary?.activeEntries ?? 0) > 0 ? 'ok' : (repoWikiDiagnostics.length > 0 ? 'warning' : 'warning')),
       factCount: repoWikiSummary?.activeEntries ?? repoWikiFacts.length,
       diagnostics: repoWikiDiagnostics.filter((message) => !message.startsWith('Repo Wiki summary')),
@@ -1274,10 +1221,10 @@ function buildProviderHealth(input: {
     },
     {
       id: 'store',
-      label: 'Stored facts',
+      label: '已存事实',
       status: input.storedFacts.length > 0 ? 'ok' : 'warning',
       factCount: input.storedFacts.length,
-      diagnostics: input.storedFacts.length > 0 ? [] : ['No persisted Context V2 facts are available for this project yet.'],
+      diagnostics: input.storedFacts.length > 0 ? [] : ['当前项目还没有持久化上下文事实。'],
       updatedAt: latestFactUpdatedAt(input.storedFacts, input.inspectedAt),
       details: {
         projectFacts: input.storedFacts.filter((fact) => fact.scope === 'project').length,
@@ -1287,18 +1234,18 @@ function buildProviderHealth(input: {
     },
     {
       id: 'memory',
-      label: 'Memory review',
+      label: '记忆检查',
       status: input.memoryAvailable ? 'ok' : 'warning',
       factCount: input.memoryAvailable ? 1 : 0,
-      diagnostics: input.memoryAvailable ? [] : ['Project memory index has not been created yet.'],
+      diagnostics: input.memoryAvailable ? [] : ['项目记忆索引尚未创建。'],
       updatedAt: input.inspectedAt,
     },
     {
       id: 'model',
-      label: 'Active model',
+      label: '当前模型',
       status: input.session ? 'ok' : 'warning',
       factCount: input.session ? 1 : 0,
-      diagnostics: input.session ? [] : ['Session is not active; model provider details are limited.'],
+      diagnostics: input.session ? [] : ['会话未激活，模型提供方信息有限。'],
       updatedAt: input.inspectedAt,
       details: {
         provider: providerName ?? null,

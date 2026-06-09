@@ -12,6 +12,7 @@ export const fileReadTool: ToolHandler = {
 
 Usage notes:
 - By default reads up to 2000 lines. Use offset and limit for large files.
+- Requires file_path. Never call this tool with an empty argument object.
 - Do NOT re-read a file you just edited — the edit was successful if no error was returned.
 - If you re-read an unchanged file, you'll get a stub message pointing you to the earlier result.
 - When you already know which part of the file you need, only read that part — important for larger files.

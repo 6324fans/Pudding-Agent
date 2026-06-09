@@ -4,7 +4,7 @@ import { useBackgroundTaskStore, type BackgroundTaskItem } from '../stores/backg
 import { useTeamStore } from '../stores/team-store'
 import { useContextStore, type ContextRequestState } from '../stores/context-store'
 import { ipc, type ContextInspectSnapshot, type ContextRefreshSnapshot, type VerificationInspectSnapshot } from '../lib/ipc-client'
-import { IconTasks, IconQueue, IconUsage, IconFiles, IconSession, IconX, IconTeam, IconCodeGraph } from './icons'
+import { IconTasks, IconQueue, IconUsage, IconFiles, IconSession, IconX, IconTeam, IconContext } from './icons'
 import { TeamDetailPanel } from './TeamDetailPanel'
 import { ContextCurrentPanel } from './context/ContextCurrentPanel'
 import { ContextAdvancedDiagnosticsPanel } from './context/ContextAdvancedDiagnosticsPanel'
@@ -238,7 +238,7 @@ export function Inspector() {
   const railItems: RailItem[] = [
     { id: 'session', Icon: IconSession, badge: null },
     { id: 'usage', Icon: IconUsage, badge: null },
-    { id: 'context', Icon: IconCodeGraph, badge: contextBadge, badgeColor: contextWarningCount > 0 ? 'var(--warn)' : undefined },
+    { id: 'context', Icon: IconContext, badge: contextBadge, badgeColor: contextWarningCount > 0 ? 'var(--warn)' : undefined },
     { id: 'tasks', Icon: IconTasks, badge: taskBadge, badgeColor: taskBadgeColor },
     { id: 'team', Icon: IconTeam, badge: teamBadge, badgeColor: teamBadgeColor },
     { id: 'queue', Icon: IconQueue, badge: messageQueue.length || null },

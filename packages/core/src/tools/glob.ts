@@ -11,6 +11,7 @@ export const globTool: ToolHandler = {
 
 Usage notes:
 - Use this instead of bash find for locating files by name or extension.
+- Requires pattern. Never call this tool with an empty argument object.
 - Common patterns: "**/*.ts" (all TypeScript), "src/**/*.{js,jsx}" (JS in src), "**/test*" (test files).
 - Automatically ignores node_modules and .git directories.
 - If you get too many results, narrow the pattern or specify a subdirectory in the path parameter.`,

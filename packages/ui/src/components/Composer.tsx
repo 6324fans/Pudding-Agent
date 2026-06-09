@@ -2,11 +2,10 @@ import { useRef, useCallback, useEffect, useState, type ChangeEvent, type Keyboa
 import { ImagePreview } from './ImagePreview'
 import { SlashCommandMenu, type SlashCommand } from './SlashCommandMenu'
 import { BranchSwitcher } from './BranchSwitcher'
-import { IconCodeGraph, IconFiles, IconPlus, IconSend, IconStop, IconX } from './icons'
+import { IconFiles, IconPlus, IconSend, IconStop, IconX } from './icons'
 import { useSessionStore } from '../stores/session-store'
 import { useIdeStore } from '../stores/ide-store'
 import { isSameOrChildPath } from '../lib/path-match'
-import { useCodegraph } from '../hooks/useCodegraph'
 import { buildPromptWithAttachments, formatBytes, getFilesFromDataTransfer, readLocalFiles, type TextAttachment } from '../lib/attachments'
 
 interface Props {
@@ -109,7 +108,6 @@ export function Composer({
 
   const activeProject = projects.find((p) => p.sessions.some((s) => s.id === activeSessionId))
   const cwd = activeProject?.cwd || ''
-  const codegraph = useCodegraph(cwd)
 
   const ideConnections = useIdeStore((s) => s.connections)
   const ideSelection = useIdeStore((s) => s.selection)
@@ -394,51 +392,6 @@ export function Composer({
             skillsOnly={slashOnlySkills}
           />
           <div className="flex items-end gap-3">
-            {/* CodeGraph indicator — left of input */}
-            {codegraph.status !== 'hidden' && (
-              <div className="relative group shrink-0">
-                <button
-                  type="button"
-                  onClick={codegraph.run}
-                  disabled={codegraph.status === 'indexing'}
-                  aria-label={
-                    codegraph.status === 'ready'
-                      ? '重建代码图谱索引'
-                      : codegraph.status === 'error'
-                        ? '重试建立代码图谱索引'
-                        : '建立代码图谱索引'
-                  }
-                  className={`flex h-[54px] w-[52px] flex-col items-center justify-center gap-1 rounded-[10px] border transition-colors ${
-                    codegraph.status === 'ready'
-                      ? 'border-[var(--good)]/30 text-[var(--good)] hover:bg-[var(--good)]/5'
-                      : codegraph.status === 'indexing'
-                      ? 'border-[var(--border)] text-[var(--accent)] cursor-wait'
-                      : codegraph.status === 'error'
-                      ? 'border-[var(--bad)]/30 text-[var(--bad)] hover:bg-[var(--bad)]/5'
-                      : 'border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-strong)]'
-                  }`}
-                >
-                  <IconCodeGraph size={17} />
-                  <span className={`text-[9px] leading-none whitespace-nowrap ${codegraph.status === 'indexing' ? 'animate-pulse' : ''}`}>
-                    {codegraph.status === 'idle'
-                      ? '图谱'
-                      : codegraph.status === 'indexing'
-                        ? '索引'
-                        : codegraph.status === 'ready'
-                          ? '就绪'
-                          : '重试'}
-                  </span>
-                </button>
-                {/* Tooltip */}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-[8px] bg-[var(--surface)] border border-[var(--border)] shadow-[var(--shadow-soft)] text-[11px] text-[var(--text)] whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-200 z-50">
-                  {codegraph.status === 'idle' && '建立代码图谱，让 AI 理解调用关系'}
-                  {codegraph.status === 'indexing' && (codegraph.progress || '正在扫描项目文件...')}
-                  {codegraph.status === 'ready' && '代码图谱已就绪，点击可重建索引'}
-                  {codegraph.status === 'error' && (codegraph.error || '索引失败，点击重试')}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px] w-2 h-2 rotate-45 bg-[var(--surface)] border-r border-b border-[var(--border)]" />
-                </div>
-              </div>
-            )}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}

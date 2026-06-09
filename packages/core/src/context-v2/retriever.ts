@@ -64,7 +64,7 @@ export function retrieveContextFacts(options: RetrieveContextFactsOptions): Cont
 }
 
 export function formatContextSection(section: ContextSection): string {
-  const lines = [`# Context V2 Project Facts`]
+  const lines = [`# 上下文项目事实`]
   for (const item of section.facts) {
     const label = item.title ? `${item.title}: ` : ''
     const citations = item.citations.length > 0
@@ -74,7 +74,7 @@ export function formatContextSection(section: ContextSection): string {
   }
   if (section.citations.length > 0) {
     lines.push('')
-    lines.push('Citations:')
+    lines.push('引用:')
     for (const citation of section.citations) {
       lines.push(`${citationLabel(citation)} ${citation.type}:${citation.ref}${citation.line ? `:${citation.line}` : ''}`)
     }
@@ -87,7 +87,7 @@ function buildContextSection(items: RetrievedContextFact[], tokenEstimate: numbe
   const facts = items.map((item) => item.fact)
   return {
     id: `context-v2-${facts.map((fact) => fact.id).join('-')}`,
-    title: 'Context V2 Project Facts',
+    title: '上下文项目事实',
     content: facts.map((fact) => fact.content).join('\n'),
     facts,
     citations,

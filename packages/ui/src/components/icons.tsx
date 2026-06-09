@@ -163,7 +163,7 @@ export function IconSend({ size = 18, className }: IconProps) {
   );
 }
 
-export function IconCodeGraph({ size = 18, className }: IconProps) {
+export function IconContext({ size = 18, className }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} {...defaultProps}>
       <circle cx={6} cy={12} r={2.5} />

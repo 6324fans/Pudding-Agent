@@ -5,7 +5,7 @@
 //   @import.source        on a module specifier string
 //   @import.name          on a local imported identifier
 //
-// These are name-based (not type-resolved) — same approach CodeGraph used.
+// These are name-based rather than type-resolved; callers must verify ambiguous symbols by file and line.
 
 import type { SymbolKind } from '../types.js'
 

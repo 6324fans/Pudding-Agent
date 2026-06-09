@@ -1,4 +1,4 @@
-// Public surface for the experimental Pudding Context Engine.
+// Public surface for the built-in Pudding Context Engine.
 
 import { ContextEngine } from './engine.js'
 

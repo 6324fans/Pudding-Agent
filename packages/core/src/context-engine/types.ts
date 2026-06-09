@@ -1,4 +1,4 @@
-// Core data model for the experimental Pudding Context Engine.
+// Core data model for the built-in Pudding Context Engine.
 // We store only symbol metadata (name/kind/location/edges), never source text —
 // source is read on demand from disk. This keeps memory bounded on large repos.
 

@@ -9,12 +9,6 @@ import type {
   VerificationRequirementRecord,
 } from '@puddingagent/core'
 
-export interface CodegraphState {
-  cwd: string
-  initialized: boolean
-  dismissed: boolean
-}
-
 export interface McpServerState {
   name: string
   config: { transport: 'stdio' | 'sse'; command?: string; args?: string[]; url?: string; env?: Record<string, string>; headers?: Record<string, string>; disabled?: boolean }
@@ -164,10 +158,6 @@ export interface ChatBridgeSnapshot {
   events: ChatBridgeEvent[]
 }
 
-export interface ExperimentalConfig {
-  experimentalContextEngine?: boolean
-}
-
 export type ContextProviderStatus = 'ok' | 'warning' | 'error' | 'disabled'
 
 export interface ContextCitation {
@@ -182,7 +172,7 @@ export interface ContextCitation {
 export interface ContextFact {
   id: string
   projectKey: string
-  kind: 'project' | 'code' | 'git' | 'conversation'
+  kind: 'project' | 'code' | 'git' | 'conversation' | 'repo_wiki'
   scope: 'project' | 'session' | 'turn'
   content: string
   citations: ContextCitation[]
@@ -347,15 +337,6 @@ declare global {
       chatBridgeRegeneratePairingCode?: () => Promise<ChatBridgeSnapshot>
       chatBridgeSaveProject?: (project: Partial<ChatBridgeSnapshot['project']>) => Promise<ChatBridgeSnapshot>
       onChatBridgeStateChanged?: (callback: (snapshot: ChatBridgeSnapshot) => void) => () => void
-      // CodeGraph
-      codegraphApi: {
-        init: (cwd: string) => Promise<void>
-        reindex: (cwd: string) => Promise<void>
-        dismiss: (cwd: string) => Promise<void>
-        refreshState: (cwd: string) => Promise<void>
-        onState: (cb: (s: CodegraphState) => void) => () => void
-        onInitProgress: (cb: (e: { cwd: string; line: string }) => void) => () => void
-      }
     }
   }
 }
@@ -464,7 +445,7 @@ export const ipc = {
 
   config: {
     get: () =>
-      invoke('config:get') as Promise<AppConfig & ExperimentalConfig>,
+      invoke('config:get') as Promise<AppConfig>,
     set: (config: Partial<AppConfig>) =>
       invoke('config:set', config) as Promise<{ success: boolean }>,
   },
