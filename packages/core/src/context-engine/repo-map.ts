@@ -184,7 +184,7 @@ function languageGroups(files: FileIndex[]): RepoMapLanguageGroup[] {
 export function classifyFileRole(filePath: string): RepoMapFileRole {
   const lower = filePath.toLowerCase()
   const base = lower.split('/').pop() ?? lower
-  if (/^(readme|agents|puddingagent|jdcagnet|contributing|changelog|design|plan)(\.[a-z0-9]+)?$/.test(base)) return 'doc'
+  if (/^(readme|agents|puddingagent|contributing|changelog|design|plan)(\.[a-z0-9]+)?$/.test(base)) return 'doc'
   if (/^(package|tsconfig|jsconfig|vite|vitest|eslint|prettier|rollup|webpack|next|tailwind|postcss)(\.|-|$)/.test(base)) return 'config'
   if (/(^|\/)(__tests__|tests?)\//.test(lower) || /(^|[._-])(test|spec)\.[^.]+$/.test(base)) return 'test'
   if (/^(main|index|app|server|cli)\.[^.]+$/.test(base)) return 'entrypoint'

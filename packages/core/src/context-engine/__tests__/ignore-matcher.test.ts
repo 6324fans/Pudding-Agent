@@ -6,7 +6,7 @@ import { createIgnoreMatcher } from '../indexer/scanner.js'
 
 describe('context-engine: shared ignore matcher (scan + watcher)', () => {
   it('matches built-in dirs and .gitignore entries the watcher must skip', () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'jdc-ignore-'))
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'pudding-ignore-'))
     try {
       writeFileSync(path.join(dir, '.gitignore'), ['docs/', 'generated/', '*.gen.ts', ''].join('\n'))
       const isIgnored = createIgnoreMatcher(dir)

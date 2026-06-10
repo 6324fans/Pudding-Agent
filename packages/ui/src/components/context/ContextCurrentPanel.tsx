@@ -1,214 +1,122 @@
-import type { ReactNode } from 'react'
-import type { ContextInspectSnapshot, ContextCitation } from '../../lib/ipc-client'
+import type { ContextInspectPayload } from '@puddingagent/core'
+import { Badge, ContextMarkdown, formatDate, formatPercent, formatTokens, freshnessLabel, kindLabel, Metric, PanelFrame, PanelState, statusTone } from './ContextPanelPrimitives'
 
-export function ContextCurrentPanel({ snapshot, loading, error, onReload }: {
-  snapshot: ContextInspectSnapshot | null
+type InspectableSection = NonNullable<ContextInspectPayload['bundle']>['sections'][number]
+
+export function ContextCurrentPanel({ payload, loading, error }: {
+  payload: ContextInspectPayload | null
   loading: boolean
   error: string | null
-  onReload: () => void
 }) {
-  if (loading) return <PanelState title="正在读取上下文" message="上下文引擎" />
-  if (error) return <PanelState title="上下文暂不可用" message={error} />
-  if (!snapshot) return <PanelState title="暂无上下文快照" message="上下文引擎" />
-  if (snapshot.status === 'unavailable') return <PanelState title="上下文暂不可用" message={snapshot.diagnostics[0] ?? '上下文引擎暂不可用'} />
+  if (loading) return <PanelState title="正在读取当前上下文" message="正在读取最近一次注入的上下文包。" />
+  if (error) return <PanelState title="当前上下文暂不可用" message={error} />
+  if (!payload) return <PanelState title="尚未读取当前上下文" message="等待会话上下文快照。" />
+  if (payload.status === 'disabled') return <PanelState title="上下文引擎已关闭" message="聊天继续运行，当前不会注入项目上下文。" />
+  if (payload.status === 'unavailable') return <PanelState title="当前上下文暂不可用" message={payload.diagnostics[0]?.message ?? '上下文快照无法读取。'} />
+  if (!payload.bundle) return <PanelState title="暂无当前上下文" message="这个会话还没有可展示的注入上下文。" />
 
-  const section = snapshot.current.section
-  const citations = section?.citations ?? []
+  const bundle = payload.bundle
+  const suppressedCount = payload.droppedSections.length
 
   return (
-    <section className="space-y-3">
-      <PanelHeader title="当前上下文" actionLabel="刷新" onAction={onReload} />
-      <div className="grid grid-cols-3 gap-2">
-        <Metric label="命中" value={snapshot.current.facts.length} />
-        <Metric label="令牌" value={section?.tokenEstimate ?? snapshot.current.usedTokens} />
-        <Metric label="引用" value={citations.length} />
+    <PanelFrame title="当前上下文" subtitle={`上下文包 ${bundle.id} · ${formatDate(payload.inspectedAt)}`}>
+      <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(120px,1fr))]">
+        <Metric label="段落" value={bundle.sections.length} />
+        <Metric label="已使用" value={formatTokens(bundle.budget.usedTokens)} />
+        <Metric label="已抑制" value={suppressedCount} />
       </div>
 
-      {!section ? (
-        <PanelState title="暂无注入片段" message={snapshot.query} />
-      ) : (
-        <article className="min-w-0 rounded-[6px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="break-words text-[12px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">{section.title}</div>
-              <div className="mt-0.5 break-words text-[10px] uppercase tracking-[0.08em] text-[var(--muted)] [overflow-wrap:anywhere]">
-                {section.id}
-              </div>
-            </div>
-            <StatusPill tone="good">{section.tokenEstimate} 令牌</StatusPill>
-          </div>
-          <LongText text={section.content} />
-          <CitationList citations={citations} />
-        </article>
-      )}
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="whitespace-normal break-words text-[11px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">本轮注入</div>
+        <div className="whitespace-normal break-words text-[11px] text-[var(--muted)] [overflow-wrap:anywhere]">已抑制 {suppressedCount}</div>
+      </div>
 
-      <div className="space-y-2">
-        <div className="text-[10px] tracking-[0.08em] text-[var(--muted)]">事实</div>
-        {snapshot.current.facts.length === 0 ? (
-          <p className="text-[12px] text-[var(--muted)]">暂无命中事实</p>
-        ) : (
-          snapshot.current.facts.map((item) => (
-            <article key={item.fact.id} className="min-w-0 rounded-[6px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5">
+      {bundle.sections.length === 0 ? (
+        <PanelState title="暂无上下文段落" message="最近一次上下文包没有注入段落。" />
+      ) : (
+        <div className="space-y-2">
+          {bundle.sections.map((section) => (
+            <article key={section.id} className="min-w-0 space-y-2 rounded-[8px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-2)_42%,transparent)] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="break-words text-[12px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">
-                    {displayFactTitle(item.fact.title, item.fact.kind)}
-                  </div>
-                  <div className="mt-0.5 break-words text-[10px] tracking-[0.08em] text-[var(--muted)] [overflow-wrap:anywhere]">
-                    {factKindLabel(item.fact.kind)} · {factScopeLabel(item.fact.scope)} · 分数 {item.score}
+                  <div className="whitespace-normal break-words text-[12px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">{section.title}</div>
+                  <div className="mt-0.5 whitespace-normal break-words font-mono text-[10px] uppercase text-[var(--muted)] [overflow-wrap:anywhere]">
+                    {kindLabel(section.kind)}
                   </div>
                 </div>
-                <StatusPill tone="muted">{item.tokenEstimate} 令牌</StatusPill>
+                <Badge tone={statusTone(section.freshness)}>{freshnessLabel(section.freshness)}</Badge>
               </div>
-              <LongText text={item.fact.content} />
-              <CitationList citations={item.fact.citations} />
+
+              {section.content && <ContextMarkdown content={section.content} />}
+
+              <div className="grid gap-1.5 [grid-template-columns:repeat(auto-fit,minmax(110px,1fr))]">
+                <Metric label="来源" value={section.sourceProvider} />
+                <Metric label="置信度" value={formatPercent(section.confidence)} />
+                <Metric label="新鲜度" value={freshnessLabel(section.freshness)} />
+                <Metric label="令牌" value={formatTokens(section.tokenCost.tokenEstimate)} />
+                <Metric label="注入原因" value={injectionReason(section)} />
+              </div>
+
+              {(section.tokenCost.source || section.tokenCost.droppedTokens) && (
+                <div className="whitespace-normal break-words text-[10px] text-[var(--muted)] [overflow-wrap:anywhere]">
+                  {section.tokenCost.source ? `估算 ${section.tokenCost.source}` : ''}
+                  {section.tokenCost.source && section.tokenCost.droppedTokens ? ' · ' : ''}
+                  {section.tokenCost.droppedTokens ? `已裁剪 ${section.tokenCost.droppedTokens}` : ''}
+                </div>
+              )}
+
+              <CitationList citations={section.citations} />
             </article>
-          ))
-        )}
-      </div>
-    </section>
-  )
-}
-
-export function PanelHeader({ title, actionLabel, onAction }: {
-  title: string
-  actionLabel?: string
-  onAction?: () => void
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <h3 className="text-[11px] uppercase tracking-[0.1em] text-[var(--muted)] font-medium">{title}</h3>
-      {actionLabel && onAction && (
-        <button
-          type="button"
-          onClick={onAction}
-          className="rounded-[6px] border border-[var(--border)] px-2 py-1 text-[10px] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--text)]"
-        >
-          {actionLabel}
-        </button>
+          ))}
+        </div>
       )}
-    </div>
+
+      {suppressedCount > 0 && (
+        <div className="min-w-0 rounded-[8px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-2)_46%,transparent)] px-3 py-2.5">
+          <div className="whitespace-normal break-words text-[11px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">未注入</div>
+          <div className="mt-1 whitespace-normal break-words text-[10px] text-[var(--muted)] [overflow-wrap:anywhere]">
+            {payload.droppedSections.length} 条上下文被预算或规划器抑制。
+          </div>
+          <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
+            {payload.droppedSections.map((item) => (
+              <Badge key={item.section.id} tone="muted">{item.reason}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+    </PanelFrame>
   )
 }
 
-export function PanelState({ title, message }: { title: string; message: string }) {
-  return (
-    <div className="min-w-0 rounded-[6px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5">
-      <div className="break-words text-[12px] font-medium text-[var(--text)] [overflow-wrap:anywhere]">{title}</div>
-      <div className="mt-1 break-words text-[11px] text-[var(--muted)] [overflow-wrap:anywhere]">{message}</div>
-    </div>
-  )
-}
+function CitationList({ citations }: { citations: InspectableSection['citations'] }) {
+  if (citations.length === 0) {
+    return <div className="text-[10px] text-[var(--muted)]">引用 0</div>
+  }
 
-export function Metric({ label, value }: { label: string; value: string | number | null | undefined }) {
   return (
-    <div className="min-w-0 rounded-[6px] border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-2">
-      <div className="text-[10px] tracking-[0.08em] text-[var(--muted)]">{label}</div>
-      <div className="mt-1 truncate text-[12px] font-medium text-[var(--text)]" title={String(value ?? '无')}>
-        {value ?? '无'}
+    <div className="space-y-1">
+      <div className="font-mono text-[10px] uppercase text-[var(--muted)]">引用</div>
+      <div className="flex flex-wrap gap-1.5">
+        {citations.map((citation) => (
+          <span key={citation.id} className="max-w-full whitespace-normal break-words rounded-[5px] border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-3)_45%,transparent)] px-1.5 py-1 font-mono text-[10px] text-[var(--muted)] [overflow-wrap:anywhere]">
+            {citation.ref}{citation.line ? `:${citation.line}` : ''}
+          </span>
+        ))}
       </div>
     </div>
   )
 }
 
-export function StatusPill({ tone, children }: { tone: 'good' | 'warn' | 'bad' | 'accent' | 'muted'; children: ReactNode }) {
-  const color = tone === 'good'
-    ? 'var(--good)'
-    : tone === 'warn'
-      ? 'var(--warn)'
-      : tone === 'bad'
-        ? 'var(--bad)'
-        : tone === 'accent'
-          ? 'var(--accent)'
-          : 'var(--muted)'
-  return (
-    <span
-      className="inline-flex max-w-full items-center rounded-[999px] border px-1.5 py-0.5 text-[10px] leading-none"
-      style={{ color, borderColor: color }}
-    >
-      <span className="truncate">{children}</span>
-    </span>
-  )
-}
-
-export function LongText({ text }: { text: string }) {
-  const displayText = localizeContextText(text)
-  if (displayText.length <= 520) {
-    return <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-[var(--text)] [overflow-wrap:anywhere]">{displayText}</p>
-  }
-
-  return (
-    <details className="mt-2">
-      <summary className="cursor-pointer text-[11px] text-[var(--muted)] hover:text-[var(--text)]">
-        {displayText.slice(0, 220).replace(/\s+/g, ' ')}...
-      </summary>
-      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-[6px] border border-[var(--border)] bg-[var(--surface)] p-2 text-[10px] leading-relaxed text-[var(--text)] [overflow-wrap:anywhere]">
-        {displayText}
-      </pre>
-    </details>
-  )
-}
-
-export function CitationList({ citations }: { citations: ContextCitation[] }) {
-  if (citations.length === 0) return <div className="mt-2 text-[10px] text-[var(--muted)]">引用 0</div>
-  return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
-      {citations.map((citation, index) => (
-        <span
-          key={citation.id || `${citation.ref}-${citation.line ?? index}`}
-          className="max-w-full truncate rounded-[4px] border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1 font-mono text-[10px] text-[var(--muted)]"
-          title={`${citation.type}:${citation.ref}${citation.line ? `:${citation.line}` : ''}`}
-        >
-          {citationRefLabel(citation.ref)}{citation.line ? `:${citation.line}` : ''}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-function localizeContextText(text: string): string {
-  return text
-    .replace(/(^|\n)user:/g, '$1用户:')
-    .replace(/(^|\n)assistant:/g, '$1助手:')
-    .replace(/(^|\n)system:/g, '$1系统:')
-    .replace(/(^|\n)current user:/g, '$1当前用户:')
-    .replace(/\bcurrent-user-message\b/g, '当前用户消息')
-    .replace(/\bcurrent-turn\b/g, '当前轮次')
-    .replace(/\bconversation\b/g, '会话')
-}
-
-function citationRefLabel(ref: string): string {
-  switch (ref) {
-    case 'current-user-message': return '当前用户消息'
-    case 'current-turn': return '当前轮次'
-    default: return ref
-  }
-}
-
-export function factKindLabel(kind: string): string {
-  switch (kind) {
-    case 'project': return '项目'
-    case 'code': return '代码'
-    case 'git': return 'Git'
-    case 'conversation': return '会话'
-    case 'repo_wiki': return '仓库 Wiki'
-    default: return kind
-  }
-}
-
-export function factScopeLabel(scope: string): string {
-  switch (scope) {
-    case 'project': return '项目级'
-    case 'session': return '会话级'
-    case 'turn': return '本轮'
-    default: return scope
-  }
-}
-
-export function displayFactTitle(title: string | undefined, kind: string): string {
-  if (title === 'Context V2 Project Facts') return '上下文项目事实'
-  if (title === 'Current conversation state') return '当前会话状态'
-  if (title === 'Rejected Repo Wiki Generation') return '被拒绝的仓库 Wiki 生成结果'
-  if (!title) return factKindLabel(kind)
-  return title
+function injectionReason(section: InspectableSection): string {
+  if (section.kind === 'memory') return '项目事实命中'
+  if (section.kind === 'project_profile') return '项目画像匹配'
+  if (section.kind === 'relevant_code') return '相关代码匹配'
+  if (section.kind === 'repo_wiki') return '仓库 Wiki 命中'
+  if (section.kind === 'runtime_state') return '运行状态相关'
+  if (section.kind === 'ide_state') return '编辑器状态相关'
+  if (section.kind === 'git_state') return 'Git 状态相关'
+  if (section.kind === 'user_intent') return '当前目标相关'
+  if (section.kind === 'conversation_state') return '对话状态相关'
+  if (section.kind === 'diagnostics') return '诊断相关'
+  return '上下文规划命中'
 }

@@ -54,7 +54,7 @@ function indexFailed(error: string): ToolResult {
 
 const contextTool: ToolHandler = {
   definition: {
-    name: 'Context',
+    name: 'PuddingContext',
     description:
       '首选代码上下文工具。根据任务、问题或需求描述聚合入口符号、相关符号、关键源码、当前未提交改动和近期热区文件。适合回答“某功能怎么实现”“从哪里改”“架构/bug 背景是什么”。',
     inputSchema: {
@@ -112,7 +112,7 @@ const contextTool: ToolHandler = {
 
 const contextSearchTool: ToolHandler = {
   definition: {
-    name: 'ContextSearch',
+    name: 'PuddingSearch',
     description: '按名称搜索项目符号，返回匹配定义及 file:line。由内置 Pudding Context Engine 提供。',
     inputSchema: {
       type: 'object',
@@ -135,7 +135,7 @@ const contextSearchTool: ToolHandler = {
 
 const contextNodeTool: ToolHandler = {
   definition: {
-    name: 'ContextNode',
+    name: 'PuddingNode',
     description: '查看单个符号的位置、签名、静态调用者、静态被调用者，可选返回源码正文。',
     inputSchema: {
       type: 'object',
@@ -165,7 +165,7 @@ const contextNodeTool: ToolHandler = {
 
 const contextCallersTool: ToolHandler = {
   definition: {
-    name: 'ContextCallers',
+    name: 'PuddingCallers',
     description: '查找所有静态调用某个符号的函数/方法。适合理解用法和变更影响入口。',
     inputSchema: {
       type: 'object',
@@ -187,7 +187,7 @@ const contextCallersTool: ToolHandler = {
 
 const contextCalleesTool: ToolHandler = {
   definition: {
-    name: 'ContextCallees',
+    name: 'PuddingCallees',
     description: '查找某个符号静态调用的函数/方法。适合理解依赖和执行流。',
     inputSchema: {
       type: 'object',
@@ -209,7 +209,7 @@ const contextCalleesTool: ToolHandler = {
 
 const contextImpactTool: ToolHandler = {
   definition: {
-    name: 'ContextImpact',
+    name: 'PuddingImpact',
     description: '通过向上遍历静态调用者，分析修改某个符号可能影响的范围。',
     inputSchema: {
       type: 'object',
@@ -232,7 +232,7 @@ const contextImpactTool: ToolHandler = {
 
 const contextTraceTool: ToolHandler = {
   definition: {
-    name: 'ContextTrace',
+    name: 'PuddingTrace',
     description: '追踪两个符号之间的静态调用路径，用于回答“from 如何到达 to”。',
     inputSchema: {
       type: 'object',
@@ -255,7 +255,7 @@ const contextTraceTool: ToolHandler = {
 
 const contextExploreTool: ToolHandler = {
   definition: {
-    name: 'ContextExplore',
+    name: 'PuddingExplore',
     description: '一次返回多个相关符号的源码片段，并按文件展示。适合批量检查相关实现。',
     inputSchema: {
       type: 'object',
@@ -278,7 +278,7 @@ const contextExploreTool: ToolHandler = {
 
 const contextFilesTool: ToolHandler = {
   definition: {
-    name: 'ContextFiles',
+    name: 'PuddingFiles',
     description: '查看已索引的项目文件结构和每个文件的符号数量。',
     inputSchema: {
       type: 'object',

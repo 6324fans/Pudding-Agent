@@ -10,6 +10,7 @@ import type { ModelProvider } from './model-provider.js'
 import type { ContextFactKind } from './context-v2/index.js'
 import type { Message, ModelConfig, ToolDefinition, PromptSegment } from './types.js'
 import { getContextEnginePromptSegment } from './context-engine/index.js'
+import type { ModelCapabilityProfile } from './model-profile.js'
 
 const execFileAsync = promisify(execFile)
 const CONFIG_DIR = path.join(os.homedir(), '.puddingagent')
@@ -23,6 +24,7 @@ export interface ContextOptions {
   skills?: { name: string; description: string; argumentHint?: string; trigger?: string }[]
   language?: string
   customInstructions?: string
+  modelProfile?: ModelCapabilityProfile
 }
 
 export interface ContextV2PromptOptions {
@@ -47,53 +49,79 @@ export interface ContextV2RepoWikiOptions {
   modelProfileId?: string
 }
 
-export async function loadProjectMd(cwd: string): Promise<string | null> {
-  // Support multiple conventions: PUDDINGAGENT.md, CLAUDE.md, AGENTS.md, .cursorrules
-  const candidates = [
-    path.join(cwd, 'PUDDINGAGENT.md'),
-    path.join(cwd, '.puddingagent', 'PUDDINGAGENT.md'),
-    path.join(cwd, 'CLAUDE.md'),
-    path.join(cwd, '.claude', 'CLAUDE.md'),
-    path.join(cwd, 'AGENTS.md'),
-    path.join(cwd, '.github', 'copilot-instructions.md'),
-    path.join(cwd, '.cursorrules'),
-  ]
-  for (const p of candidates) {
-    try { return await readFile(p, 'utf-8') } catch {}
-  }
-  return null
+export interface InstructionSource {
+  ref: string
+  content: string
+  scope: 'global' | 'project' | 'rule'
 }
 
-export async function loadGlobalMd(): Promise<string | null> {
-  // Support both ~/.puddingagent/PUDDINGAGENT.md and ~/.claude/CLAUDE.md
-  const candidates = [
-    path.join(CONFIG_DIR, 'PUDDINGAGENT.md'),
-    path.join(os.homedir(), '.claude', 'CLAUDE.md'),
-  ]
-  for (const p of candidates) {
-    try { return await readFile(p, 'utf-8') } catch {}
+async function readInstructionCandidate(candidate: { ref: string; fullPath: string; scope: InstructionSource['scope'] }): Promise<InstructionSource | null> {
+  try {
+    return { ref: candidate.ref, content: await readFile(candidate.fullPath, 'utf-8'), scope: candidate.scope }
+  } catch {
+    return null
   }
-  return null
 }
 
-export async function loadProjectRules(cwd: string): Promise<string[]> {
-  // Support both .puddingagent/rules/ and .claude/rules/
-  const rulesDirs = [
-    path.join(cwd, '.puddingagent', 'rules'),
-    path.join(cwd, '.claude', 'rules'),
-  ]
-  const contents: string[] = []
-  for (const rulesDir of rulesDirs) {
+export async function loadInstructionSources(cwd: string): Promise<InstructionSource[]> {
+  const sources: InstructionSource[] = []
+
+  for (const candidate of [
+    { ref: '~/.puddingagent/PUDDINGAGENT.md', fullPath: path.join(CONFIG_DIR, 'PUDDINGAGENT.md'), scope: 'global' as const },
+    { ref: '~/.claude/CLAUDE.md', fullPath: path.join(os.homedir(), '.claude', 'CLAUDE.md'), scope: 'global' as const },
+  ]) {
+    const source = await readInstructionCandidate(candidate)
+    if (source) {
+      sources.push(source)
+      break
+    }
+  }
+
+  for (const candidate of [
+    { ref: 'PUDDINGAGENT.md', fullPath: path.join(cwd, 'PUDDINGAGENT.md'), scope: 'project' as const },
+    { ref: '.puddingagent/PUDDINGAGENT.md', fullPath: path.join(cwd, '.puddingagent', 'PUDDINGAGENT.md'), scope: 'project' as const },
+    { ref: 'CLAUDE.md', fullPath: path.join(cwd, 'CLAUDE.md'), scope: 'project' as const },
+    { ref: '.claude/CLAUDE.md', fullPath: path.join(cwd, '.claude', 'CLAUDE.md'), scope: 'project' as const },
+    { ref: 'AGENTS.md', fullPath: path.join(cwd, 'AGENTS.md'), scope: 'project' as const },
+    { ref: '.github/copilot-instructions.md', fullPath: path.join(cwd, '.github', 'copilot-instructions.md'), scope: 'project' as const },
+    { ref: '.cursorrules', fullPath: path.join(cwd, '.cursorrules'), scope: 'project' as const },
+  ]) {
+    const source = await readInstructionCandidate(candidate)
+    if (source) {
+      sources.push(source)
+      break
+    }
+  }
+
+  for (const dir of [
+    { prefix: '.puddingagent/rules', fullPath: path.join(cwd, '.puddingagent', 'rules') },
+    { prefix: '.claude/rules', fullPath: path.join(cwd, '.claude', 'rules') },
+  ]) {
     try {
-      const files = await readdir(rulesDir)
-      const mds = files.filter(f => f.endsWith('.md')).sort()
-      for (const f of mds) {
-        const content = await readFile(path.join(rulesDir, f), 'utf-8')
-        contents.push(`# ${f}\n${content}`)
+      const files = (await readdir(dir.fullPath)).filter((file) => file.endsWith('.md')).sort()
+      for (const file of files) {
+        sources.push({
+          ref: `${dir.prefix}/${file}`,
+          content: `# ${file}\n${await readFile(path.join(dir.fullPath, file), 'utf-8')}`,
+          scope: 'rule',
+        })
       }
     } catch {}
   }
-  return contents
+
+  return sources
+}
+
+export async function loadProjectMd(cwd: string): Promise<string | null> {
+  return (await loadInstructionSources(cwd)).find((source) => source.scope === 'project')?.content ?? null
+}
+
+export async function loadGlobalMd(): Promise<string | null> {
+  return (await loadInstructionSources(process.cwd())).find((source) => source.scope === 'global')?.content ?? null
+}
+
+export async function loadProjectRules(cwd: string): Promise<string[]> {
+  return (await loadInstructionSources(cwd)).filter((source) => source.scope === 'rule').map((source) => source.content)
 }
 
 export function getMemoryDir(cwd: string): string {
@@ -236,6 +264,7 @@ export async function assembleSystemPrompt(opts: ContextOptions): Promise<Prompt
       environment: env,
       mcpServers: opts.mcpServers,
       permissionMode: opts.permissionMode,
+      modelProfile: opts.modelProfile,
     }),
     cacheable: true,
   })

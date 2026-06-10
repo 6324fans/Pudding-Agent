@@ -223,6 +223,7 @@ export interface ContextInspectSnapshot {
     storedFactCount: number
     providerFactCount: number
   }
+  projectUnderstandingFacts?: ContextFact[]
   providerHealth: ContextProviderHealthItem[]
   memoryReview: {
     memoryDir: string

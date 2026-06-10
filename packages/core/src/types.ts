@@ -20,6 +20,7 @@ export interface ToolResultContent {
   tool_use_id: string
   content: string
   is_error?: boolean
+  metadata?: ToolResultMetadata
 }
 
 export interface ImageContent {
@@ -53,6 +54,10 @@ export interface ToolDefinition {
 }
 
 export interface ToolResultMetadata {
+  suppressedToolCall?: {
+    reason: 'missing_required_arguments'
+    missing: string[]
+  }
   fileRead?: {
     filePath: string
     offset: number

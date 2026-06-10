@@ -5,6 +5,7 @@ import type { FileTracker } from './file-tracker.js'
 import { isPlanModeToolAllowed } from './tools/enter-plan-mode.js'
 import { FileReadStateCache } from './file-read-state.js'
 import { SafetyPolicyRuntime } from './safety/policy-runtime.js'
+import { ConstraintPolicyRuntime } from './constraints/policy-runtime.js'
 
 export interface ToolExecutionEvent {
   type: 'start' | 'progress' | 'complete' | 'error'
@@ -17,6 +18,14 @@ export interface ToolExecutionEvent {
 
 export type PermissionCallback = (request: { toolName: string; input: Record<string, unknown> }) => Promise<boolean>
 
+export interface BackgroundShellCompletion {
+  shell: 'bash' | 'powershell'
+  taskId: string
+  command: string
+  exitCode: number | null
+  output: string
+}
+
 export class ToolRunner {
   private registry: ToolRegistry
   private cwd: string
@@ -25,7 +34,8 @@ export class ToolRunner {
   private hookEngine?: HookEngine
   private sessionId?: string
   fileTracker?: FileTracker
-  fileReadState?: import('./file-read-state.js').FileReadStateCache
+  fileReadState = new FileReadStateCache()
+  constraintRuntime = new ConstraintPolicyRuntime()
   safetyRuntime?: SafetyPolicyRuntime
   backgroundTasks?: import('./background-tasks.js').BackgroundTaskManager
   turnIndex = 0
@@ -50,6 +60,27 @@ export class ToolRunner {
     this.safetyRuntime = safetyRuntime ?? new SafetyPolicyRuntime({ cwd })
   }
 
+  recordBackgroundShellCompletion(completion: BackgroundShellCompletion): void {
+    this.constraintRuntime.postToolUse({
+      toolName: completion.shell === 'powershell' ? 'powershell' : 'bash',
+      toolUseId: completion.taskId,
+      input: { command: completion.command, run_in_background: true },
+      cwd: this.cwd,
+      fileReadState: this.fileReadState,
+      result: {
+        content: completion.output || '(no output)',
+        isError: completion.exitCode !== 0,
+        metadata: {
+          command: {
+            shell: completion.shell,
+            command: completion.command,
+            exitCode: completion.exitCode,
+          },
+        },
+      },
+    })
+  }
+
   async execute(
     toolName: string,
     toolUseId: string,
@@ -57,9 +88,29 @@ export class ToolRunner {
     onEvent: (event: ToolExecutionEvent) => void,
     signal?: AbortSignal
   ): Promise<ToolResult> {
-    const handler = this.registry.get(toolName)
+    const handlerName = resolveRegisteredToolName(toolName, this.registry)
+    const handler = this.registry.get(handlerName)
     if (!handler) {
       const result: ToolResult = { content: `Unknown tool: ${toolName}`, isError: true }
+      onEvent({ type: 'error', toolName, toolUseId, result })
+      return result
+    }
+
+    const missingRequired = getMissingRequiredArguments(handler.definition.inputSchema, input)
+    if (missingRequired.length > 0) {
+      const result: ToolResult = {
+        content: [
+          `工具调用 ${toolName} 已被系统拦截，因为缺少必填参数：${missingRequired.join(', ')}。`,
+          '请根据工具 schema 补全参数后重新调用，不要再次使用空参数或占位参数。',
+        ].join('\n'),
+        isError: true,
+        metadata: {
+          suppressedToolCall: {
+            reason: 'missing_required_arguments',
+            missing: missingRequired,
+          },
+        },
+      }
       onEvent({ type: 'error', toolName, toolUseId, result })
       return result
     }
@@ -98,10 +149,7 @@ export class ToolRunner {
       }
     }
 
-    onEvent({ type: 'start', toolName, toolUseId, input })
-
-    const fileReadState = this.fileReadState ?? new FileReadStateCache()
-    this.fileReadState = fileReadState
+    const fileReadState = this.fileReadState
 
     if (this.safetyRuntime) {
       const safetyDecision = this.safetyRuntime.preToolUse({
@@ -120,6 +168,24 @@ export class ToolRunner {
         onEvent({ type: 'progress', toolName, toolUseId, message: `Safety warning: ${safetyDecision.warning}` })
       }
     }
+
+    const constraintDecision = this.constraintRuntime.preToolUse({
+      toolName,
+      toolUseId,
+      input,
+      cwd: this.cwd,
+      fileReadState,
+    })
+    if (constraintDecision.decision === 'block') {
+      const result: ToolResult = {
+        content: `Blocked by Pudding Agent Constraint Engine: ${constraintDecision.reason}`,
+        isError: true,
+      }
+      onEvent({ type: 'error', toolName, toolUseId, result })
+      return result
+    }
+
+    onEvent({ type: 'start', toolName, toolUseId, input })
 
     // PreToolUse hooks
     if (this.hookEngine) {
@@ -154,6 +220,15 @@ export class ToolRunner {
     try {
       const result = await handler.execute(input, context)
 
+      this.constraintRuntime.postToolUse({
+        toolName,
+        toolUseId,
+        input,
+        cwd: this.cwd,
+        fileReadState,
+        result,
+      })
+
       this.safetyRuntime?.postToolUse({
         toolName,
         toolUseId,
@@ -185,4 +260,43 @@ export class ToolRunner {
       return result
     }
   }
+}
+
+function resolveRegisteredToolName(toolName: string, registry: ToolRegistry): string {
+  if (registry.get(toolName)) return toolName
+  const alias = LEGACY_TOOL_ALIASES[toolName]
+  return alias && registry.get(alias) ? alias : toolName
+}
+
+const LEGACY_TOOL_ALIASES: Record<string, string> = {
+  Bash: 'bash',
+  Powershell: 'powershell',
+  Read: 'file_read',
+  Write: 'file_write',
+  Edit: 'file_edit',
+  MultiEdit: 'multi_edit',
+  NotebookEdit: 'notebook_edit',
+  Glob: 'glob',
+  Grep: 'grep',
+  LS: 'ls',
+  Tree: 'tree',
+  LSP: 'lsp',
+}
+
+function getMissingRequiredArguments(
+  inputSchema: Record<string, unknown> | undefined,
+  input: Record<string, unknown> | undefined,
+): string[] {
+  const required = Array.isArray(inputSchema?.required) ? inputSchema.required : []
+  if (required.length === 0) return []
+  return required
+    .filter((name): name is string => typeof name === 'string')
+    .filter((name) => isMissingRequiredValue(input?.[name]))
+}
+
+function isMissingRequiredValue(value: unknown): boolean {
+  if (value == null) return true
+  if (typeof value === 'string') return value.trim().length === 0
+  if (Array.isArray(value)) return value.length === 0
+  return false
 }

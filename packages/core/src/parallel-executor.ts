@@ -12,6 +12,7 @@ export interface ToolBatchResult {
   tool_use_id: string
   content: string
   is_error: boolean
+  metadata?: import('./types.js').ToolResultMetadata
 }
 
 const READ_TOOLS = new Set([
@@ -19,11 +20,13 @@ const READ_TOOLS = new Set([
   'web_fetch', 'web_search', 'weather', 'lsp',
   'task_get', 'task_list', 'task_stop',
   'list_mcp_resources', 'read_mcp_resource', 'skill', 'skill_list', 'Skill',
-  'Context', 'ContextSearch', 'ContextNode', 'ContextCallers', 'ContextCallees',
-  'ContextImpact', 'ContextTrace', 'ContextExplore', 'ContextFiles',
+  'PuddingContext', 'PuddingSearch', 'PuddingNode', 'PuddingCallers', 'PuddingCallees',
+  'PuddingImpact', 'PuddingTrace', 'PuddingExplore', 'PuddingFiles',
 ])
 
-const LONG_RUNNING_TOOLS = new Set(['Agent', 'bash', 'monitor'])
+const LONG_RUNNING_TOOLS = new Set(['Agent', 'Team', 'bash', 'monitor'])
+const DELEGATION_TOOLS = new Set(['Agent', 'Team'])
+const FILE_MUTATION_TOOLS = new Set(['file_write', 'file_edit', 'multi_edit', 'notebook_edit'])
 
 const DEFAULT_MAX_CONCURRENCY = 5
 
@@ -32,6 +35,11 @@ class Semaphore {
   private running = 0
 
   constructor(private limit: number) {}
+
+  setLimit(limit: number): void {
+    this.limit = limit
+    this.drain()
+  }
 
   async acquire(): Promise<void> {
     if (this.running < this.limit) {
@@ -42,9 +50,14 @@ class Semaphore {
   }
 
   release(): void {
-    this.running--
-    const next = this.queue.shift()
-    if (next) {
+    this.running = Math.max(0, this.running - 1)
+    this.drain()
+  }
+
+  private drain(): void {
+    while (this.running < this.limit) {
+      const next = this.queue.shift()
+      if (!next) return
       this.running++
       next()
     }
@@ -53,16 +66,23 @@ class Semaphore {
 
 export class ParallelExecutor {
   private maxConcurrency: number
+  private readSemaphore: Semaphore
 
   constructor(
     private toolRunner: ToolRunner,
     options: { modelProfile?: ModelCapabilityProfile } = {},
   ) {
     this.maxConcurrency = normalizeMaxConcurrency(options.modelProfile?.maxParallelToolCalls)
+    this.readSemaphore = new Semaphore(this.maxConcurrency)
   }
 
   updateModelProfile(modelProfile?: ModelCapabilityProfile): void {
-    this.maxConcurrency = normalizeMaxConcurrency(modelProfile?.maxParallelToolCalls)
+    this.setMaxReadConcurrency(modelProfile?.maxParallelToolCalls)
+  }
+
+  setMaxReadConcurrency(maxReadConcurrency: number | undefined): void {
+    this.maxConcurrency = normalizeMaxConcurrency(maxReadConcurrency)
+    this.readSemaphore.setLimit(this.maxConcurrency)
   }
 
   /**
@@ -79,18 +99,19 @@ export class ParallelExecutor {
     input: Record<string, unknown>,
     onEvent: (event: ToolExecutionEvent) => void,
     signal: AbortSignal,
-  ): Promise<{ tool_use_id: string; content: string; is_error: boolean; aborted?: boolean }> {
+  ): Promise<{ tool_use_id: string; content: string; is_error: boolean; metadata?: import('./types.js').ToolResultMetadata; aborted?: boolean }> {
     const tool = this.toolRunner.execute(name, id, input, onEvent, signal).then(r => ({
       tool_use_id: id,
       content: r.content,
       is_error: r.isError || false,
+      metadata: r.metadata,
     }))
     if (signal.aborted) {
-      return { tool_use_id: id, content: 'Cancelled by user (abort)', is_error: true, aborted: true }
+      return { tool_use_id: id, content: abortMessage(signal), is_error: true, aborted: true }
     }
     const aborted = new Promise<{ tool_use_id: string; content: string; is_error: boolean; aborted: true }>((resolve) => {
       signal.addEventListener('abort', () => {
-        resolve({ tool_use_id: id, content: 'Cancelled by user (abort)', is_error: true, aborted: true })
+        resolve({ tool_use_id: id, content: abortMessage(signal), is_error: true, aborted: true })
       }, { once: true })
     })
     return Promise.race([tool, aborted])
@@ -122,30 +143,29 @@ export class ParallelExecutor {
     // Execute reads in parallel
     let readHadError = false
     if (readIndices.length > 0) {
-      const semaphore = new Semaphore(this.maxConcurrency)
       const readPromises = readIndices.map(async (idx) => {
         if (batchAbort.signal.aborted) {
           results[idx] = { tool_use_id: blocks[idx].id, content: 'Cancelled: sibling tool failed', is_error: true }
           return
         }
-        await semaphore.acquire()
+        await this.readSemaphore.acquire()
         try {
           if (batchAbort.signal.aborted) {
             results[idx] = { tool_use_id: blocks[idx].id, content: 'Cancelled: sibling tool failed', is_error: true }
             return
           }
-          const toolSignal = LONG_RUNNING_TOOLS.has(blocks[idx].name)
-            ? combinedSignal
-            : AbortSignal.any([combinedSignal, AbortSignal.timeout(120_000)])
+          const toolSignal = shouldUseDefaultToolTimeout(blocks[idx].name)
+            ? AbortSignal.any([combinedSignal, AbortSignal.timeout(120_000)])
+            : combinedSignal
           const raced = await this.raceWithAbort(
             blocks[idx].name, blocks[idx].id, blocks[idx].input, onEvent, toolSignal
           )
-          results[idx] = { tool_use_id: raced.tool_use_id, content: raced.content, is_error: raced.is_error }
-          if (raced.is_error && !raced.aborted) {
+          results[idx] = { tool_use_id: raced.tool_use_id, content: raced.content, is_error: raced.is_error, metadata: raced.metadata }
+          if (raced.is_error && !raced.aborted && shouldCancelSiblingToolsOnReadError(blocks[idx].name)) {
             readHadError = true
           }
         } finally {
-          semaphore.release()
+          this.readSemaphore.release()
         }
       })
       await Promise.all(readPromises)
@@ -161,14 +181,14 @@ export class ParallelExecutor {
         results[idx] = { tool_use_id: blocks[idx].id, content: 'Cancelled: sibling tool failed', is_error: true }
         continue
       }
-      const toolSignal = LONG_RUNNING_TOOLS.has(blocks[idx].name)
-        ? combinedSignal
-        : AbortSignal.any([combinedSignal, AbortSignal.timeout(120_000)])
+      const toolSignal = shouldUseDefaultToolTimeout(blocks[idx].name)
+        ? AbortSignal.any([combinedSignal, AbortSignal.timeout(120_000)])
+        : combinedSignal
       const raced = await this.raceWithAbort(
         blocks[idx].name, blocks[idx].id, blocks[idx].input, onEvent, toolSignal
       )
-      results[idx] = { tool_use_id: raced.tool_use_id, content: raced.content, is_error: raced.is_error }
-      if (raced.is_error && !raced.aborted) {
+      results[idx] = { tool_use_id: raced.tool_use_id, content: raced.content, is_error: raced.is_error, metadata: raced.metadata }
+      if (raced.is_error && !raced.aborted && !isDelegationTool(blocks[idx].name)) {
         batchAbort.abort()
       }
     }
@@ -187,4 +207,32 @@ export class ParallelExecutor {
 function normalizeMaxConcurrency(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_CONCURRENCY
   return Math.min(DEFAULT_MAX_CONCURRENCY, Math.max(1, Math.round(value)))
+}
+
+function isPuddingReadTool(name: string): boolean {
+  return name.startsWith('Pudding')
+}
+
+function isDelegationTool(name: string): boolean {
+  return DELEGATION_TOOLS.has(name)
+}
+
+function shouldUseDefaultToolTimeout(name: string): boolean {
+  return !LONG_RUNNING_TOOLS.has(name) && !FILE_MUTATION_TOOLS.has(name)
+}
+
+export function isEagerExecutableTool(name: string): boolean {
+  return READ_TOOLS.has(name) && !LONG_RUNNING_TOOLS.has(name)
+}
+
+export function shouldCancelSiblingToolsOnReadError(name: string): boolean {
+  return READ_TOOLS.has(name) && !isPuddingReadTool(name)
+}
+
+function abortMessage(signal: AbortSignal): string {
+  const reason = signal.reason
+  if (reason && typeof reason === 'object' && 'name' in reason && (reason as any).name === 'TimeoutError') {
+    return 'Cancelled: tool startup timed out'
+  }
+  return 'Cancelled by user (abort)'
 }

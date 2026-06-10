@@ -43,13 +43,17 @@ interface Props {
 function findToolResult(
   toolUseId: string,
   toolResultMessage?: Message
-): { content: string; is_error?: boolean } | undefined {
+): { content: string; is_error?: boolean; metadata?: ToolResultContent['metadata'] } | undefined {
   if (!toolResultMessage || toolResultMessage.role !== 'user') return undefined
   const block = toolResultMessage.content.find(
     (b): b is ToolResultContent => b.type === 'tool_result' && b.tool_use_id === toolUseId
   )
   if (!block) return undefined
-  return { content: block.content, is_error: block.is_error }
+  return { content: block.content, is_error: block.is_error, metadata: block.metadata }
+}
+
+function isSuppressedToolResult(result?: { metadata?: ToolResultContent['metadata'] }): boolean {
+  return result?.metadata?.suppressedToolCall?.reason === 'missing_required_arguments'
 }
 
 export function ConversationTurn({
@@ -119,13 +123,15 @@ export function ConversationTurn({
                 )
               }
               if (block.type === 'tool_use') {
-                if (skipToolUse && !findToolResult(block.id, pair.toolResultMessage)) return null
+                const result = findToolResult(block.id, pair.toolResultMessage)
+                if (skipToolUse && !result) return null
+                if (isSuppressedToolResult(result)) return null
                 return (
                   <div key={block.id} className="mb-2">
                     <ToolCardRouter
                       name={block.name}
                       input={block.input}
-                      result={findToolResult(block.id, pair.toolResultMessage)}
+                      result={result}
                     />
                   </div>
                 )

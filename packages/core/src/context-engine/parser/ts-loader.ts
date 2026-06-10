@@ -49,7 +49,7 @@ function resolvePackageFile(request: string): string | null {
 
 /** Directory holding web-tree-sitter's runtime `tree-sitter.wasm`. */
 function runtimeWasmDir(): string | null {
-  const override = process.env.PUDDING_TREE_SITTER_WASM_DIR ?? process.env.JDC_TREE_SITTER_WASM_DIR
+  const override = process.env.PUDDING_TREE_SITTER_WASM_DIR
   if (override && existsSync(path.join(override, 'tree-sitter.wasm'))) return override
   const entry = resolvePackageFile('web-tree-sitter')
   return entry ? path.dirname(entry) : null
@@ -57,7 +57,7 @@ function runtimeWasmDir(): string | null {
 
 /** Directory holding grammar wasms (tree-sitter-*.wasm). */
 function grammarWasmDir(): string | null {
-  const override = process.env.PUDDING_GRAMMAR_WASM_DIR ?? process.env.JDC_GRAMMAR_WASM_DIR
+  const override = process.env.PUDDING_GRAMMAR_WASM_DIR
   if (override && existsSync(override)) return override
   const pkg = resolvePackageFile('tree-sitter-wasms/package.json')
   return pkg ? path.join(path.dirname(pkg), 'out') : null

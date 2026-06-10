@@ -83,7 +83,7 @@ describe('Session Context V2 prompt injection', () => {
     expect(Array.isArray(provider.systemPrompt)).toBe(true)
     const segments = provider.systemPrompt as PromptSegment[]
     const dateIndex = segments.findIndex((segment) => segment.content.includes('# Current Date'))
-    const contextV2Index = segments.findIndex((segment) => segment.content.includes('# Context V2 Project Facts'))
+    const contextV2Index = segments.findIndex((segment) => segment.content.includes('# 上下文片段'))
 
     expect(contextV2Index).toBeGreaterThan(dateIndex)
     expect(segments[contextV2Index].cacheable).toBe(false)

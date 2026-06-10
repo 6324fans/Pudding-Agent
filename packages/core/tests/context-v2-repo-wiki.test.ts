@@ -42,7 +42,7 @@ describe('context-v2 repo wiki', () => {
     writeFileSync(path.join(cwd, 'README.md'), '# Pudding\nRun pnpm test.\n', 'utf-8')
     writeFileSync(path.join(cwd, 'AGENTS.md'), 'Follow local instructions.', 'utf-8')
     writeFileSync(path.join(cwd, 'PUDDINGAGENT.md'), 'Use Pudding instructions.', 'utf-8')
-    writeFileSync(path.join(cwd, 'JDCAGNET.md'), 'Legacy doc that should not be used.', 'utf-8')
+    writeFileSync(path.join(cwd, 'OLDAGENT.md'), 'Legacy doc that should not be used.', 'utf-8')
     writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ scripts: { test: 'vitest', build: 'tsc' } }), 'utf-8')
     const mainContent = 'export function main() {}\n'
     writeFileSync(path.join(cwd, 'src/main.ts'), mainContent, 'utf-8')
@@ -54,7 +54,7 @@ describe('context-v2 repo wiki', () => {
 
     expect(evidence.diagnostics).toEqual([])
     expect(evidence.packets.map((packet) => packet.ref)).toEqual(expect.arrayContaining(['code-index', 'src/main.ts', 'README.md', 'AGENTS.md', 'PUDDINGAGENT.md', 'package.json']))
-    expect(evidence.packets.map((packet) => packet.ref)).not.toContain('JDCAGNET.md')
+    expect(evidence.packets.map((packet) => packet.ref)).not.toContain('OLDAGENT.md')
     expect(evidence.packets.find((packet) => packet.ref === 'src/main.ts')?.hash).toBe(hashCurrentContent(mainContent))
     expect(evidence.packets.find((packet) => packet.ref === 'package.json')?.content).toContain('"test":"vitest"')
     expect(evidence.evidenceHash).toMatch(/^[a-f0-9]{64}$/)

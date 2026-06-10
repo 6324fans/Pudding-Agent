@@ -1,4 +1,14 @@
 import type { Message } from './types.js'
+import { calculateMetrics, type TestMetrics } from './test-metrics.js'
+
+export function estimateTokensWithMetrics(messages: Message[]): { tokens: number; metrics: TestMetrics[] } {
+  const metrics: TestMetrics[] = []
+  const start = Date.now()
+  const tokens = estimateTokens(messages)
+  metrics.push({ timestamp: Date.now(), operation: 'estimateTokens', duration: Date.now() - start })
+  const totalDuration = calculateMetrics(metrics)
+  return { tokens, metrics: [{ timestamp: Date.now(), operation: 'total', duration: totalDuration }] }
+}
 
 export function estimateTokens(messages: Message[]): number {
   let tokens = 0
@@ -20,6 +30,10 @@ export function estimateTokens(messages: Message[]): number {
     }
   }
   return tokens
+}
+
+export function estimateTextTokensPublic(text: string): number {
+  return estimateTextTokens(text)
 }
 
 function estimateTextTokens(text: string): number {

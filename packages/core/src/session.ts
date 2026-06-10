@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { v4 as uuid } from 'uuid'
 import path from 'node:path'
 import type { Message, ModelConfig, SessionConfig, StreamChunk } from './types.js'
@@ -6,20 +8,19 @@ import { ToolRegistry } from './tool-registry.js'
 import { ToolRunner, type ToolExecutionEvent, type PermissionCallback } from './tool-runner.js'
 import { registerBuiltinTools } from './tools/index.js'
 import { ConversationHistory } from './history.js'
-import { assembleSystemPrompt, getMemoryDir, loadContextV2PromptSegment } from './context.js'
+import { assembleSystemPrompt, loadInstructionSources } from './context.js'
+import { getContextEnginePromptSegment } from './context-engine/index.js'
 import { loadAppConfig, getConfigDir } from './config.js'
 import { PermissionChecker } from './permissions.js'
 import { TaskStore } from './task-store.js'
 import { estimateTokens } from './token-estimation.js'
 import { compactMessages, MIN_COMPACT_LENGTH } from './compact.js'
-import { parseMemories, saveMemories } from './memory-extractor.js'
 import { createTaskCreateTool } from './tools/task-create.js'
 import { createTaskGetTool } from './tools/task-get.js'
 import { createTaskListTool } from './tools/task-list.js'
 import { createTaskUpdateTool } from './tools/task-update.js'
 import { createTaskStopTool } from './tools/task-stop.js'
 import { createTodoWriteTool } from './tools/todo-write.js'
-import { saveMemoryTool } from './tools/save-memory.js'
 import { McpManager } from './mcp/manager.js'
 import { createMcpToolHandler } from './mcp/mcp-tool-handler.js'
 import { createListMcpResourcesTool } from './tools/list-mcp-resources.js'
@@ -35,7 +36,15 @@ import { classifyError, getMaxRetries, getRetryDelay } from './retry.js'
 import { UsageTracker, type UsageSnapshot } from './usage-tracker.js'
 import { FileTracker } from './file-tracker.js'
 import { FileReadStateCache } from './file-read-state.js'
-import { ParallelExecutor } from './parallel-executor.js'
+import type { ContextInspectPayload } from './tools/context-inspect.js'
+import { buildConstraintObservabilitySnapshot, type ConstraintObservabilitySnapshot } from './constraints/observability.js'
+import {
+  ParallelExecutor,
+  isEagerExecutableTool,
+  shouldCancelSiblingToolsOnReadError,
+  type ToolBatchResult,
+} from './parallel-executor.js'
+import { resolveModelCapabilityProfile, strictToolGroundingProfile, type ModelCapabilityProfile } from './model-profile.js'
 import { BackgroundTaskManager } from './background-tasks.js'
 import { createTaskOutputTool } from './tools/task-output.js'
 import { monitorTool } from './tools/monitor.js'
@@ -46,6 +55,33 @@ import { createBackgroundStatusTool } from './tools/background-status.js'
 import { createBackgroundEventsTool } from './tools/background-events.js'
 import { createTeamListTool } from './tools/team-list.js'
 import { createTeamAddTaskTool } from './tools/team-add-task.js'
+import { buildContextBundle, type ContextProvider } from './context/orchestrator.js'
+import { mainSessionProfile } from './context/actor-profile.js'
+import { DEFAULT_CONTEXT_ENGINE_CONFIG, resolveContextEngineConfig, type ContextEngineConfigInput } from './context/config.js'
+import { openContextStore, type ContextStore } from './context/store.js'
+import { enqueueHarvest, runHarvestJob } from './context/harvest.js'
+import { classifyHarvestCandidate } from './context/safety.js'
+import { assistantMessagesContainProjectSummary, isHarvestConfirmationSaveTurn } from './context/harvest-router.js'
+import { captureHarvestModelBinding } from './context/model-binding.js'
+import { createProviderDistillerModelClient } from './context/distillers/index.js'
+import { createProviderRepoWikiModelClient } from './context/repo-wiki/index.js'
+import { deriveVerificationRequirements } from './constraints/verification-requirements.js'
+import { evaluateTurnEndGate } from './constraints/turn-end-gate.js'
+import { hashContent } from './context/providers/shared.js'
+import { createContextScheduler, type ContextScheduler } from './context/scheduler.js'
+import type { ContextEngineConfig, ContextRequest, HarvestCandidate, HarvestModelBinding, ProviderProtocol } from './context/types.js'
+import type { RuntimeModelResolution } from './model-resolution.js'
+import {
+  collectCodeContext,
+  collectConversationContext,
+  collectGitContext,
+  collectIdeContext,
+  collectMemoryContext,
+  collectProjectContext,
+  collectRepoWikiContext,
+  collectRuntimeContext,
+  collectWorkflowContext,
+} from './context/providers/index.js'
 
 export interface SessionEvents {
   onStreamChunk: (chunk: StreamChunk) => void
@@ -94,11 +130,25 @@ export class Session {
    * frame instead of getting an empty placeholder. Process-only — not persisted.
    */
   private teamFinalSnapshots = new Map<string, any>()
+  private contextConfig: ContextEngineConfig = DEFAULT_CONTEXT_ENGINE_CONFIG
+  private contextScheduler: ContextScheduler = createContextScheduler({ maxBackgroundPerProject: DEFAULT_CONTEXT_ENGINE_CONFIG.performance?.maxBackgroundJobsPerProject ?? 1 })
+  private contextStore?: ContextStore
+  private contextProviders?: ContextProvider[]
+  private contextId?: () => string
+  private contextProtocol?: ProviderProtocol
+  private contextModelGroupId?: string
+  private contextBaseUrl?: string
+  private modelProfile?: ModelCapabilityProfile
+  private recentToolEvents: ToolExecutionEvent[] = []
   private turnIndex = 0
+  private runLoopFileSnapshot: Set<string> = new Set()
+  private pendingHarvestCount = 0
+  private totalHarvestCount = 0
+  private lastHarvestStartedAt = 0
   private turnsSinceTaskTool = 0
   private planMode: 'normal' | 'planning' | 'awaiting_approval' = 'normal'
   private onPlanReview?: (planFile: string, content: string) => Promise<{ approved: boolean; feedback?: string }>
-  resolveModel?: (modelId: string) => import('./model-resolution.js').RuntimeModelResolution
+  resolveModel?: (modelId: string) => RuntimeModelResolution
   ideContext?: { filePath?: string; text?: string; selection?: { start: { line: number }; end: { line: number } } | null }
   private pendingNotifications: Array<{
     type: 'shell_complete' | 'agent_complete' | 'team_progress' | 'team_complete'
@@ -114,6 +164,7 @@ export class Session {
     teamEvent?: string
   }> = []
   onNotificationReady?: () => void
+  /** @internal exposed for testing */ _teamEventHandler?: (teamId: string, event: any) => void
 
   constructor(
     config: SessionConfig,
@@ -133,14 +184,26 @@ export class Session {
     this.taskStore = new TaskStore(history, config.id)
     this.backgroundTasks = new BackgroundTaskManager(path.join(getConfigDir(), 'tasks'))
     this.teamRegistry = new TeamRegistry()
+    this.contextConfig = resolveContextEngineConfig(loadAppConfig().contextEngine as ContextEngineConfigInput | undefined)
+    this.contextScheduler = this.createContextScheduler()
     this.backgroundTasks.setOnComplete((task) => {
       if (task.type === 'shell') {
+        const output = this.backgroundTasks.getOutput(task.id, 50)
+        if (task.command && task.shell) {
+          this.toolRunner.recordBackgroundShellCompletion({
+            shell: task.shell,
+            taskId: task.id,
+            command: task.command,
+            exitCode: task.exitCode ?? null,
+            output,
+          })
+        }
         this.pendingNotifications.push({
           type: 'shell_complete',
           taskId: task.id,
           status: task.status as 'completed' | 'failed',
           command: task.command,
-          output: this.backgroundTasks.getOutput(task.id, 50),
+          output,
           exitCode: task.exitCode,
         })
       } else {
@@ -165,35 +228,64 @@ export class Session {
     this.toolRegistry.register(createTaskUpdateTool(this.taskStore))
     this.toolRegistry.register(createTaskStopTool(this.taskStore))
     this.toolRegistry.register(createTodoWriteTool(this.taskStore))
-    this.toolRegistry.register(saveMemoryTool)
     this.toolRegistry.register(createTaskOutputTool(this.backgroundTasks))
     this.toolRegistry.register(monitorTool)
+    const session = this
+    const liveProvider: ModelProvider = {
+      get name() { return session.provider.name },
+      chat: (messages, tools, modelConfig, signal) => session.provider.chat(messages, tools, modelConfig, signal),
+      stream: (messages, tools, modelConfig, signal) => session.provider.stream(messages, tools, modelConfig, signal),
+    }
     // Team Mode tools
     const onSubAgentUsage = (u: { inputTokens: number; outputTokens: number; cacheCreationInputTokens?: number; cacheReadInputTokens?: number }) => {
       this.usageTracker.addSubAgentTurn(u)
       this.history.saveUsage(this.id, this.usageTracker.serialize())
     }
     const buildTeamSubSessionDeps = () => ({
-      provider: this.provider,
+      provider: liveProvider,
       toolRegistry: this.toolRegistry,
       modelConfig: this.config.modelConfig,
       cwd: this.config.cwd,
       onUsage: onSubAgentUsage,
+      ...(this.contextConfig.enabled && this.contextStore ? {
+        contextEngine: {
+          sessionId: this.id,
+          config: this.contextConfig,
+          store: this.contextStore,
+          providers: this.contextProviders,
+          scheduler: this.contextScheduler,
+          id: this.contextId,
+          protocol: this.contextProtocol,
+          modelGroupId: this.contextModelGroupId,
+          baseUrl: this.contextBaseUrl,
+        },
+      } : {}),
     })
+    const resolveModelWithProfile = (modelId: string) => this.resolveRuntimeModelWithProfile(modelId)
     this.toolRegistry.register(createTeamTool({
       teamRegistry: this.teamRegistry,
       backgroundTasks: this.backgroundTasks,
       buildSubSessionDeps: buildTeamSubSessionDeps as any,
-      provider: this.provider,
+      provider: liveProvider,
       modelConfig: this.config.modelConfig,
-      resolveModel: (modelId: string) => this.resolveModel?.(modelId) ?? { status: 'failed', warning: `Requested model "${modelId}" was not found; using the main session model.` },
+      resolveModel: resolveModelWithProfile,
       getSkillLoader: () => this.skillLoader,
       onUsage: onSubAgentUsage,
-      onTeamEvent: (teamId, event) => {
+      onTeamEvent: this._teamEventHandler = (teamId, event) => {
         // Only notify the main session on terminal events (team_completed / team_failed)
         // and explicit PM replies. Intermediate events (task_completed, manager_decision,
         // etc.) fire before completeTeam() and would cause the main session to think
         // the team is done prematurely — suppress them.
+        if (event.type === 'model_resolution_warning') {
+          this.pendingNotifications.push({
+            type: 'team_progress',
+            taskId: teamId,
+            status: 'running',
+            teamEvent: `Model warning: ${(event as any).message}`,
+          })
+          this.onNotificationReady?.()
+          return
+        }
         if (event.type === 'team_completed') {
           const archivePath = (event as any).archivePath
           const archiveError = (event as any).archiveError
@@ -296,14 +388,14 @@ export class Session {
 
     // Register AgentTool for sub-agent dispatch
     this.toolRegistry.register(createAgentTool({
-      provider: this.provider,
+      provider: liveProvider,
       toolRegistry: this.toolRegistry,
       modelConfig: this.config.modelConfig,
       cwd: this.config.cwd,
       onToolEvent: undefined,
       onPermissionRequest,
       isSubAgent: false,
-      resolveModel: (modelId: string) => this.resolveModel?.(modelId) ?? { status: 'failed', warning: `Requested model "${modelId}" was not found; using the main session model.` },
+      resolveModel: resolveModelWithProfile,
       backgroundTasks: this.backgroundTasks,
       onAgentProgress: (agentToolUseId, event) => {
         this.currentEvents?.onAgentProgress?.(agentToolUseId, event)
@@ -319,6 +411,21 @@ export class Session {
         this.backgroundTriggers.set(toolUseId, resolve)
       },
       onUsage: onSubAgentUsage,
+      contextEngine: async () => {
+        if (!this.contextConfig.enabled) return undefined
+        const store = await this.getContextStore()
+        return {
+          sessionId: this.id,
+          config: this.contextConfig,
+          store,
+          providers: this.contextProviders,
+          scheduler: this.contextScheduler,
+          id: this.contextId,
+          protocol: this.contextProtocol,
+          modelGroupId: this.contextModelGroupId,
+          baseUrl: this.contextBaseUrl,
+        }
+      },
     }))
   }
 
@@ -396,7 +503,12 @@ export class Session {
 
   updateProvider(provider: ModelProvider, modelConfig: ModelConfig): void {
     this.provider = provider
-    this.config.modelConfig = { ...this.config.modelConfig, ...modelConfig }
+    const nextModelConfig = { ...this.config.modelConfig, ...modelConfig }
+    if (!Object.prototype.hasOwnProperty.call(modelConfig, 'modelProfile')) {
+      delete (nextModelConfig as Partial<ModelConfig>).modelProfile
+    }
+    this.config.modelConfig = nextModelConfig
+    this.modelProfile = this.config.modelConfig.modelProfile
     this.parallelExecutor.updateModelProfile(this.config.modelConfig.modelProfile)
     if (modelConfig.contextWindow) {
       this.usageTracker.setContextWindow(modelConfig.contextWindow)
@@ -407,6 +519,65 @@ export class Session {
     }
   }
 
+  configureContextEngine(options: {
+    config?: ContextEngineConfigInput
+    store?: ContextStore
+    providers?: ContextProvider[]
+    scheduler?: ContextScheduler
+    id?: () => string
+    protocol?: ProviderProtocol | 'openai'
+    modelGroupId?: string
+    baseUrl?: string
+  }): void {
+    this.contextConfig = resolveContextEngineConfig(options.config)
+    this.contextScheduler = options.scheduler ?? this.createContextScheduler()
+    this.contextStore = options.store
+    this.contextProviders = options.providers
+    this.contextId = options.id
+    this.contextProtocol = normalizeProviderProtocol(options.protocol)
+    this.contextModelGroupId = options.modelGroupId
+    this.contextBaseUrl = options.baseUrl
+  }
+
+  setContextModelBindingMetadata(metadata: { protocol?: ProviderProtocol | 'openai'; modelGroupId?: string; baseUrl?: string }): void {
+    this.contextProtocol = normalizeProviderProtocol(metadata.protocol) ?? this.contextProtocol
+    this.contextModelGroupId = metadata.modelGroupId ?? this.contextModelGroupId
+    this.contextBaseUrl = metadata.baseUrl ?? this.contextBaseUrl
+  }
+
+  private getContextProviders(): ContextProvider[] {
+    if (this.contextProviders) return this.contextProviders
+    const toggles = this.contextConfig.providerToggles
+    return [
+      { id: 'conversation', collect: (request) => Promise.resolve(collectConversationContext(request, { enabled: toggles.conversation })) },
+      { id: 'runtime', collect: (request) => Promise.resolve(collectRuntimeContext(request, { enabled: toggles.runtime })) },
+      { id: 'ide', collect: (request) => Promise.resolve(collectIdeContext(request, { enabled: toggles.ide })) },
+      { id: 'memory', collect: async (request) => collectMemoryContext(request, { enabled: toggles.memory, store: await this.getContextStore() }) },
+      { id: 'git', collect: (request) => collectGitContext(request, { enabled: toggles.git }) },
+      { id: 'project', collect: (request) => collectProjectContext(request, { enabled: toggles.project }) },
+      { id: 'workflow', collect: (request) => collectWorkflowContext(request, { enabled: toggles.workflow }) },
+      { id: 'repo_wiki', collect: async (request) => collectRepoWikiContext(request, {
+        enabled: toggles.repo_wiki,
+        store: await this.getContextStore(),
+        scheduler: this.contextScheduler,
+        modelClient: createProviderRepoWikiModelClient(this.provider),
+        modelConfig: this.config.modelConfig,
+        providerProtocol: this.resolveCurrentProviderProtocol(this.resolveCurrentSessionModelMetadata().protocol) ?? undefined,
+        modelProfileId: this.modelProfile?.id,
+      }) },
+      { id: 'code', collect: (request) => collectCodeContext(request, { enabled: toggles.code, scheduler: this.contextScheduler }) },
+    ]
+  }
+
+  private createContextScheduler(): ContextScheduler {
+    const performance = this.contextPerformanceConfig()
+    return createContextScheduler({ maxBackgroundPerProject: performance.maxBackgroundJobsPerProject })
+  }
+
+  private contextPerformanceConfig(): NonNullable<ContextEngineConfig['performance']> {
+    return this.contextConfig.performance ?? DEFAULT_CONTEXT_ENGINE_CONFIG.performance!
+  }
+
   setEffort(effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'): void {
     this.config.modelConfig.effort = effort
   }
@@ -415,27 +586,27 @@ export class Session {
     this.messages = []
   }
 
-  async compactNow(events: SessionEvents): Promise<void> {
+  async compactNow(events: SessionEvents): Promise<boolean> {
     if (this.messages.length < MIN_COMPACT_LENGTH) {
       events.onStreamChunk({
         type: 'compact_skipped',
         compactSkipped: { reason: 'too_short', messageCount: this.messages.length },
       })
-      return
+      return false
     }
     if (this.isCompacting) {
       events.onStreamChunk({
         type: 'compact_skipped',
         compactSkipped: { reason: 'in_progress', messageCount: this.messages.length },
       })
-      return
+      return false
     }
     const ownAbort = new AbortController()
     const previousAbort = this.abortController
     this.abortController = ownAbort
     this.isCompacting = true
     try {
-      await this.compact(events)
+      return await this.compact(events)
     } finally {
       this.isCompacting = false
       // Only restore previous controller if no new runLoop replaced it.
@@ -462,6 +633,19 @@ export class Session {
     return this.fileTracker
   }
 
+  getCwd(): string {
+    return this.config.cwd
+  }
+
+  inspectConstraints(context?: ContextInspectPayload | null): ConstraintObservabilitySnapshot {
+    return buildConstraintObservabilitySnapshot({
+      runtime: this.toolRunner.constraintRuntime,
+      cwd: this.config.cwd,
+      context,
+      modelProfile: this.config.modelConfig.modelProfile ?? this.modelProfile,
+    })
+  }
+
   getPlanMode(): string {
     return this.planMode
   }
@@ -483,77 +667,6 @@ export class Session {
     await this.ensureHooksReady()
     await this.ensureSkillsReady()
     this.syncMcpTools()
-
-    // Assemble system prompt with current tool list
-    const toolDefs = this.toolRegistry.getDefinitions()
-    const toolNames = toolDefs.map(d => d.name)
-    const mcpServers = this.mcpManager?.getServerStates()
-      .filter(s => s.status === 'connected')
-      .map(s => ({ name: s.name, toolCount: s.tools.length, tools: s.tools.map(t => t.name), instructions: s.instructions }))
-
-    const appConfig = loadAppConfig()
-    const repoWikiEnabled = Boolean(appConfig.experimentalRepoWiki ?? appConfig.experimental?.repoWiki)
-    this.config.modelConfig.systemPrompt = await assembleSystemPrompt({
-      cwd: this.config.cwd,
-      toolDefs,
-      toolNames,
-      mcpServers,
-      skills: this.skillLoader.getInvocable().map(s => ({ name: s.name, description: s.description, argumentHint: s.argumentHint })),
-      language: appConfig.language,
-      customInstructions: appConfig.customInstructions,
-    })
-
-    if (Array.isArray(this.config.modelConfig.systemPrompt)) {
-      const contextV2Segment = await loadContextV2PromptSegment({
-        cwd: this.config.cwd,
-        sessionId: this.id,
-        userMessage: text,
-        recentMessages: this.messages,
-        tokenBudget: 900,
-        maxFacts: 8,
-        repoWiki: repoWikiEnabled ? {
-          modelProvider: this.provider,
-          modelConfig: this.config.modelConfig,
-          providerProtocol: this.provider.name,
-          modelProfileId: this.config.modelConfig.modelProfile?.id,
-        } : false,
-      })
-      if (contextV2Segment) {
-        this.config.modelConfig.systemPrompt.push(contextV2Segment)
-      }
-    }
-
-    // Inject active tasks into context
-    const activeTasks = this.history.getActiveTasks(this.id)
-    if (activeTasks.length > 0 && Array.isArray(this.config.modelConfig.systemPrompt)) {
-      const taskLines = activeTasks.map(t => `- [${t.status}] #${t.id}: ${t.subject}`).join('\n')
-      this.config.modelConfig.systemPrompt.push({
-        content: `<tasks>\nCurrent tasks for this session:\n${taskLines}\n</tasks>`,
-        cacheable: false,
-      })
-    }
-
-    // Inject available models for sub-agent dispatch
-    const modelGroups = appConfig.modelGroups
-    if (modelGroups?.groups && Array.isArray(this.config.modelConfig.systemPrompt)) {
-      const modelLines: string[] = []
-      for (const group of modelGroups.groups) {
-        if (group.models?.length) {
-          for (const m of group.models) {
-            const active = m.id === modelGroups.activeModelId ? ' (current)' : ''
-            const composite = `${group.id}:${m.modelId}`
-            const label = m.name ? `${m.name} ` : ''
-            modelLines.push(`- ${label}[modelId: "${composite}", entryId: "${m.id}", apiModelId: "${m.modelId}"]${active}`)
-          }
-        }
-      }
-      if (modelLines.length > 0) {
-        this.config.modelConfig.systemPrompt.push({
-          content: `<available-models>\nWhen dispatching sub-agents via Agent or configuring Team members, you can specify modelId to use a different configured model. Prefer the composite groupId:modelId value because API model ids and display names may be ambiguous. Available models:\n${modelLines.join('\n')}\nIf the user asks to use a specific model for a sub-agent or team member, pass its modelId value exactly.\n</available-models>`,
-          cacheable: false,
-        })
-      }
-    }
 
     const content: import('./types.js').ContentBlock[] = [{ type: 'text', text }]
     if (extraContent && extraContent.length > 0) {
@@ -632,6 +745,8 @@ export class Session {
   }
 
   private microCompact(): void {
+    if (this.config.modelConfig.toolResultRetention?.microCompact !== true) return
+
     const snapshot = this.usageTracker.getSnapshot()
     let mutated = false
 
@@ -686,7 +801,7 @@ export class Session {
     }
   }
 
-  private async compact(events: SessionEvents): Promise<void> {
+  private async compact(events: SessionEvents): Promise<boolean> {
     events.onStreamChunk({ type: 'compact_start' })
     const result = await compactMessages(
       this.messages,
@@ -701,7 +816,7 @@ export class Session {
         type: 'compact_skipped',
         compactSkipped: { reason: 'too_short', messageCount: result.originalCount },
       })
-      return
+      return false
     }
 
     if (result.status === 'failed') {
@@ -712,21 +827,15 @@ export class Session {
           message: result.errorMessage,
         },
       })
-      return
+      return false
     }
 
     // status === 'compacted' — actually replace messages
     this.messages = result.messages
     this.history.replaceMessages(this.id, this.messages)
+    events.onMessagesReplaced?.(this.getMessages())
 
-    let memoriesExtracted = 0
-    if (result.rawOutput) {
-      const memories = parseMemories(result.rawOutput)
-      if (memories.length > 0) {
-        const memDir = getMemoryDir(this.config.cwd)
-        memoriesExtracted = await saveMemories(memories, memDir, this.id)
-      }
-    }
+    const memoriesExtracted = 0
 
     // Bridge usage to a realistic estimate so the gauge does not flash to 0%.
     const estimated = estimateTokens(this.messages)
@@ -742,6 +851,7 @@ export class Session {
         memoriesExtracted,
       },
     })
+    return true
   }
 
   private drainNotifications(): Message | null {
@@ -770,6 +880,14 @@ export class Session {
   private async runLoop(events: SessionEvents): Promise<void> {
     this.abortController = new AbortController()
     this.currentEvents = events
+    await this.prepareSystemPromptForRunLoop()
+    this.config.modelConfig.systemPrompt = removeContextPromptSegments(this.config.modelConfig.systemPrompt)
+
+    const runLoopStartedAt = Date.now()
+    const runLoopId = createRunLoopId(this.id, runLoopStartedAt)
+    const assistantMessagesForHarvest: Message[] = []
+    const toolEventsForHarvest: ToolExecutionEvent[] = []
+    this.runLoopFileSnapshot = new Set(this.fileTracker.getChangedFiles().map(c => c.filePath))
 
     const notificationMsg = this.drainNotifications()
     if (notificationMsg) {
@@ -782,12 +900,38 @@ export class Session {
       await this.compact(events)
     }
 
+    const runLoopUserMessage = latestUserText(this.messages)
+    await this.injectContextForRunLoop(runLoopUserMessage)
+
     let justCompacted = false
     while (true) {
       this.turnIndex++
       this.toolRunner.turnIndex = this.turnIndex
       const assistantContent: any[] = []
       let hasToolUse = false
+      const eagerToolExecutions = new Map<string, Promise<ToolBatchResult>>()
+      const recordToolEvent = (event: ToolExecutionEvent) => {
+        toolEventsForHarvest.push(event)
+        this.recentToolEvents = [...this.recentToolEvents, event].slice(-50)
+        events.onToolEvent(event)
+      }
+      const startEagerToolExecution = (block: any) => {
+        if (!isEagerExecutableTool(block.name) || eagerToolExecutions.has(block.id)) return
+        const promise = this.parallelExecutor.executeBatch(
+          [{ type: 'tool_use', id: block.id, name: block.name, input: block.input }],
+          recordToolEvent,
+          this.abortController!.signal,
+        ).then((results) => results[0] ?? {
+          tool_use_id: block.id,
+          content: 'Tool finished without a result',
+          is_error: true,
+        }).catch((error) => ({
+          tool_use_id: block.id,
+          content: error instanceof Error ? error.message : String(error),
+          is_error: true,
+        }))
+        eagerToolExecutions.set(block.id, promise)
+      }
 
       let streamSuccess = false
       let retryCount = 0
@@ -847,6 +991,9 @@ export class Session {
                 try { last.input = JSON.parse(last._rawInput) } catch { last.input = {} }
                 delete last._rawInput
               }
+              if (last?.type === 'tool_use') {
+                startEagerToolExecution(last)
+              }
             } else if (chunk.type === 'message_end' && chunk.usage) {
               this.usageTracker.addTurn(chunk.usage)
               this.history.saveUsage(this.id, this.usageTracker.serialize())
@@ -859,21 +1006,18 @@ export class Session {
 
           const category = classifyError(streamErr)
 
-          if (assistantContent.length > 0) {
-            console.error('[STREAM ERROR]', streamErr.message)
-            events.onError(streamErr)
-            this.abortController = null
-            this.currentEvents = undefined
-            return
-          }
-
           if (category === 'prompt_too_long') {
-            await this.compactNow(events)
+            const compacted = await this.compactNow(events)
+            if (!compacted) {
+              events.onError(new Error('Prompt is too long and compaction could not reduce the session context.'))
+              return
+            }
             if (this.abortController?.signal.aborted) break
             // Re-run this turn against the compacted message list.
             // Drop any partial chunks accumulated before the error so we don't
             // duplicate content into the final assistantMessage.
             assistantContent.length = 0
+            eagerToolExecutions.clear()
             hasToolUse = false
             retryCount = 0
             continue
@@ -885,6 +1029,7 @@ export class Session {
               console.log('[RUNLOOP] Gateway error after retries, attempting compact')
               await this.compact(events)
               assistantContent.length = 0
+              eagerToolExecutions.clear()
               hasToolUse = false
               retryCount = 0
               compactedOnError = true
@@ -892,8 +1037,6 @@ export class Session {
             }
             console.error('[STREAM ERROR]', streamErr.message)
             events.onError(streamErr)
-            this.abortController = null
-            this.currentEvents = undefined
             return
           }
 
@@ -903,6 +1046,7 @@ export class Session {
           // Drop partial chunks before retrying — provider will replay from the
           // start of the assistant turn.
           assistantContent.length = 0
+          eagerToolExecutions.clear()
           hasToolUse = false
 
           await new Promise<void>((resolve, reject) => {
@@ -927,6 +1071,9 @@ export class Session {
       // OpenAI Responses API often interleaves text/function_call within one response,
       // which renders as text being split by tool cards. Group them into a clean structure.
       const reorderedContent = reorderAssistantContent(assistantContent)
+      if (!hasToolUse) {
+        await this.applyTurnEndGateDisclosure(reorderedContent, runLoopUserMessage, events)
+      }
 
       const assistantMessage: Message = {
         id: uuid(),
@@ -937,16 +1084,39 @@ export class Session {
 
       this.messages.push(assistantMessage)
       this.history.addMessage(this.id, assistantMessage)
+      assistantMessagesForHarvest.push(stripThinkingForHarvest(assistantMessage))
       events.onMessageComplete(assistantMessage)
 
       if (!hasToolUse) break
 
       const toolUseBlocks = assistantContent.filter((b: any) => b.type === 'tool_use')
-      const batchResults = await this.parallelExecutor.executeBatch(
-        toolUseBlocks,
-        events.onToolEvent,
-        this.abortController!.signal
-      )
+      const eagerResultsById = new Map<string, ToolBatchResult>()
+      for (const block of toolUseBlocks) {
+        const eager = eagerToolExecutions.get(block.id)
+        if (eager) eagerResultsById.set(block.id, await eager)
+      }
+      const eagerReadHadError = toolUseBlocks.some((block: any) => {
+        const result = eagerResultsById.get(block.id)
+        return result?.is_error && shouldCancelSiblingToolsOnReadError(block.name)
+      })
+      const deferredToolUseBlocks = toolUseBlocks.filter((block: any) => !eagerToolExecutions.has(block.id))
+      const deferredResults = eagerReadHadError
+        ? deferredToolUseBlocks.map((block: any) => ({
+            tool_use_id: block.id,
+            content: 'Cancelled: sibling tool failed',
+            is_error: true,
+          }))
+        : await this.parallelExecutor.executeBatch(
+            deferredToolUseBlocks,
+            recordToolEvent,
+            this.abortController!.signal
+          )
+      const deferredResultsById = new Map(deferredResults.map((result) => [result.tool_use_id, result]))
+      const batchResults: ToolBatchResult[] = toolUseBlocks.map((block: any) => (
+        eagerResultsById.get(block.id) ??
+        deferredResultsById.get(block.id) ??
+        { tool_use_id: block.id, content: 'Tool finished without a result', is_error: true }
+      ))
       if (this.abortController?.signal.aborted) break
 
       const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_list', 'task_get', 'task_stop', 'todo_write'])
@@ -963,6 +1133,7 @@ export class Session {
         tool_use_id: r.tool_use_id,
         content: r.content + (reminder || ''),
         is_error: r.is_error,
+        metadata: r.metadata,
       }))
 
       const toolMessage: Message = {
@@ -997,8 +1168,412 @@ export class Session {
     }
     events.onUsage?.(finalSnapshot)
 
+    if (assistantMessagesForHarvest.length > 0) {
+      this.enqueueHarvestAfterRunLoop({
+        runLoopId,
+        userMessage: runLoopUserMessage,
+        assistantMessages: assistantMessagesForHarvest,
+        toolEvents: toolEventsForHarvest,
+        createdAt: runLoopStartedAt,
+      })
+    }
+
+    void this.invalidateStaleFileFactsAfterRunLoop()
+
     this.abortController = null
     this.currentEvents = undefined
+  }
+
+  private async applyTurnEndGateDisclosure(content: any[], userMessage: string, events: SessionEvents): Promise<void> {
+    const ledger = this.toolRunner.constraintRuntime.verificationLedger
+    const changedFiles = ledger.getChangedFiles()
+    if (changedFiles.length === 0) return
+
+    const plan = await deriveVerificationRequirements({
+      cwd: this.config.cwd,
+      changedFiles: changedFiles.map(file => file.filePath),
+      userMessage,
+    })
+    ledger.setRequirements(plan.requirements)
+
+    const decision = evaluateTurnEndGate({
+      changedFiles: ledger.getChangedFiles(),
+      requirements: ledger.getRequirements(),
+      assistantText: textFromContent(content),
+    })
+    if (decision.action !== 'append_disclosure') return
+
+    appendTextContent(content, decision.disclosure)
+    events.onStreamChunk({ type: 'text_delta', text: decision.disclosure })
+  }
+
+  private async invalidateStaleFileFactsAfterRunLoop(): Promise<void> {
+    if (!this.contextConfig.enabled) return
+    const changedPaths = this.fileTracker.getChangedFiles()
+      .map(change => change.filePath)
+      .filter(p => !this.runLoopFileSnapshot.has(p))
+    if (changedPaths.length === 0) return
+
+    try {
+      const store = await this.getContextStore()
+      for (const filePath of [...new Set(changedPaths)]) {
+        try {
+          const absolute = path.isAbsolute(filePath) ? filePath : path.join(this.config.cwd, filePath)
+          const content = await readFile(absolute, 'utf-8')
+          const hash = hashContent(content)
+          await store.invalidateByFileHash(filePath, hash)
+          try {
+            await store.invalidateRepoWikiByFileHash?.(filePath, hash)
+          } catch (error) {
+            try {
+              await store.saveDiagnostic(makeRuntimeContextDiagnostic('Repo Wiki file-hash invalidation failed without blocking foreground chat', error))
+            } catch {
+              // Context failures must not escape into foreground chat.
+            }
+          }
+        } catch {
+          // Missing/unreadable file (e.g. deleted) — skip; invalidation is best-effort.
+        }
+      }
+    } catch (error) {
+      try {
+        const store = await this.getContextStore()
+        await store.saveDiagnostic(makeRuntimeContextDiagnostic('File-hash invalidation failed without blocking foreground chat', error))
+      } catch {
+        // Context failures must not escape into foreground chat.
+      }
+    }
+  }
+
+  private async injectContextForRunLoop(userMessage: string): Promise<void> {
+    if (!this.contextConfig.enabled) return
+    const request = await this.createContextRequest(userMessage)
+    const performance = this.contextPerformanceConfig()
+    let renderedPrompt = ''
+    try {
+      renderedPrompt = await this.contextScheduler.runForeground(
+        'context:inject',
+        performance.degradedProviderTimeoutMs,
+        async (signal) => {
+          const store = await this.getContextStore()
+          if (signal.aborted) throw new Error('context injection budget expired')
+          const result = await buildContextBundle({ ...request, signal }, {
+            injectionEnabled: this.contextConfig.injectionEnabled,
+            includeAgentContract: true,
+            store,
+            providers: this.getContextProviders(),
+            providerTimeoutMs: performance.providerTimeoutMs,
+            scheduler: this.contextScheduler,
+            actorProfile: mainSessionProfile(request, userMessage),
+            id: this.contextId,
+          })
+          return result.renderedPrompt
+        },
+        '',
+      )
+    } catch (error) {
+      void this.saveContextInjectionDiagnostic(error)
+    }
+    if (!renderedPrompt) return
+    this.config.modelConfig.systemPrompt = appendContextPromptSegment(this.config.modelConfig.systemPrompt, renderedPrompt)
+  }
+
+  private async saveContextInjectionDiagnostic(error: unknown): Promise<void> {
+    try {
+      const store = this.contextStore ?? await this.getContextStore()
+      await store.saveDiagnostic(makeRuntimeContextDiagnostic('Context runtime injection failed without blocking foreground chat', error))
+    } catch {
+      // Store open failures must not block the first token.
+    }
+  }
+
+  private async buildCarriedContextMetadata() {
+    const instructionSources = await loadInstructionSources(this.config.cwd)
+    const activeTasks = this.history.getActiveTasks(this.id)
+    return {
+      projectInstructionRefs: instructionSources
+        .filter((source) => source.scope === 'project' || source.scope === 'rule')
+        .map((source) => source.ref),
+      gitStatusInSystemPrompt: false,
+      taskRefs: activeTasks.map((task) => String(task.id)),
+    }
+  }
+
+  private configuredModelProfiles(appConfig: Record<string, any>): ModelCapabilityProfile[] {
+    if (Array.isArray(appConfig.modelProfiles)) return appConfig.modelProfiles
+    if (Array.isArray(appConfig.modelCapabilityProfiles)) return appConfig.modelCapabilityProfiles
+    return Array.isArray(appConfig.modelProfiles?.profiles)
+      ? appConfig.modelProfiles.profiles
+      : [
+          strictToolGroundingProfile({
+            id: 'strict_tool_grounding',
+            providerPattern: 'ollama',
+            modelPattern: 'glm*',
+          }),
+        ]
+  }
+
+  private configuredModelProfileOverride(appConfig: Record<string, any>): string | undefined {
+    return typeof appConfig.modelProfiles?.overrideProfileId === 'string'
+      ? appConfig.modelProfiles.overrideProfileId
+      : undefined
+  }
+
+  private resolveModelProfileFor(providerId: string, modelId: string, appConfig: Record<string, any>): ModelCapabilityProfile {
+    return resolveModelCapabilityProfile({
+      providerId,
+      modelId,
+      overrideProfileId: this.configuredModelProfileOverride(appConfig),
+      profiles: this.configuredModelProfiles(appConfig),
+    })
+  }
+
+  private resolveRuntimeModelWithProfile(modelId: string): RuntimeModelResolution {
+    const resolution = this.resolveModel?.(modelId) ?? modelResolverUnavailable(modelId)
+    if (resolution.status !== 'resolved') return resolution
+    const appConfig = loadAppConfig()
+    return {
+      ...resolution,
+      modelConfig: {
+        ...resolution.modelConfig,
+        modelProfile: resolution.modelConfig.modelProfile ?? this.resolveModelProfileFor(
+          resolution.provider.name,
+          resolution.modelConfig.model,
+          appConfig,
+        ),
+      },
+    }
+  }
+
+  private resolveCurrentModelProfile(appConfig: Record<string, any>): ModelCapabilityProfile {
+    const configured = this.config.modelConfig.modelProfile
+    if (configured) return configured
+    return this.resolveModelProfileFor(this.provider.name, this.config.modelConfig.model, appConfig)
+  }
+
+  private async prepareSystemPromptForRunLoop(): Promise<void> {
+    const toolDefs = this.toolRegistry.getDefinitions()
+    const toolNames = toolDefs.map(d => d.name)
+    const mcpServers = this.mcpManager?.getServerStates()
+      .filter(s => s.status === 'connected')
+      .map(s => ({ name: s.name, toolCount: s.tools.length, tools: s.tools.map(t => t.name), instructions: s.instructions }))
+
+    const appConfig = loadAppConfig()
+    this.modelProfile = this.resolveCurrentModelProfile(appConfig)
+    this.config.modelConfig.modelProfile = this.modelProfile
+    this.parallelExecutor.setMaxReadConcurrency(this.modelProfile.maxParallelToolCalls)
+    this.config.modelConfig.systemPrompt = await assembleSystemPrompt({
+      cwd: this.config.cwd,
+      toolDefs,
+      toolNames,
+      mcpServers,
+      skills: this.skillLoader.getAll().map(s => ({ name: s.name, description: s.description, argumentHint: s.argumentHint })),
+      language: appConfig.language,
+      customInstructions: appConfig.customInstructions,
+      modelProfile: this.modelProfile,
+    })
+
+    const activeTasks = this.history.getActiveTasks(this.id)
+    if (activeTasks.length > 0 && Array.isArray(this.config.modelConfig.systemPrompt)) {
+      const taskLines = activeTasks.map(t => `- [${t.status}] #${t.id}: ${t.subject}`).join('\n')
+      this.config.modelConfig.systemPrompt.push({
+        content: `<tasks>\nCurrent tasks for this session:\n${taskLines}\n</tasks>`,
+        cacheable: false,
+      })
+    }
+
+    const modelGroups = appConfig.modelGroups
+    if (modelGroups?.groups && Array.isArray(this.config.modelConfig.systemPrompt)) {
+      const modelLines: string[] = []
+      for (const group of modelGroups.groups) {
+        if (group.models?.length) {
+          for (const m of group.models) {
+            const active = m.id === modelGroups.activeModelId ? ' (current)' : ''
+            const composite = `${group.id}:${m.modelId}`
+            const label = m.name ? `${m.name} ` : ''
+            modelLines.push(`- ${label}[modelId: "${composite}", entryId: "${m.id}", apiModelId: "${m.modelId}"]${active}`)
+          }
+        }
+      }
+      if (modelLines.length > 0) {
+        this.config.modelConfig.systemPrompt.push({
+          content: `<available-models>\nWhen dispatching sub-agents via Agent or configuring Team members, you can specify modelId to use a different configured model. Prefer the composite groupId:modelId value because API model ids and display names may be ambiguous. Available models:\n${modelLines.join('\n')}\nIf the user asks to use a specific model for a sub-agent or team member, pass its modelId value exactly.\n</available-models>`,
+          cacheable: false,
+        })
+      }
+    }
+
+    const engineSegment = getContextEnginePromptSegment()
+    if (engineSegment.segment && Array.isArray(this.config.modelConfig.systemPrompt)) {
+      this.config.modelConfig.systemPrompt.push({
+        content: engineSegment.segment,
+        cacheable: engineSegment.cacheable,
+      })
+    }
+  }
+
+  private async createContextRequest(userMessage: string): Promise<ContextRequest> {
+    const ide = this.ideContext ? {
+      activeFile: this.ideContext.filePath,
+      selection: this.ideContext.selection && this.ideContext.text ? {
+        text: this.ideContext.text,
+        startLine: this.ideContext.selection.start.line,
+        endLine: this.ideContext.selection.end.line,
+      } : undefined,
+    } : undefined
+    const carriedContext = await this.buildCarriedContextMetadata()
+
+    return {
+      sessionId: this.id,
+      cwd: this.config.cwd,
+      userMessage,
+      recentMessages: this.messages.slice(-8),
+      transcriptAlreadyInModel: true,
+      carriedContext,
+      mode: contextModeFromPlanMode(this.planMode),
+      model: this.config.modelConfig.model,
+      modelProfile: this.modelProfile,
+      runtime: { toolEvents: this.recentToolEvents.slice(-20), turnIndex: this.turnIndex },
+      ...(ide ? { ide } : {}),
+      createdAt: Date.now(),
+    }
+  }
+
+  private enqueueHarvestAfterRunLoop(input: { runLoopId: string; userMessage: string; assistantMessages: Message[]; toolEvents: ToolExecutionEvent[]; createdAt: number }): void {
+    if (!this.contextConfig.enabled || !this.contextConfig.harvestEnabled) return
+
+    const binding = this.captureRunLoopModelBinding()
+    if (!binding) return
+    const assistantMessages = this.assistantMessagesForHarvestCandidate(input.userMessage, input.assistantMessages)
+
+    const candidate: HarvestCandidate = {
+      sessionId: this.id,
+      runLoopId: input.runLoopId,
+      userMessage: input.userMessage,
+      assistantMessages,
+      toolEvents: input.toolEvents.map(toHarvestToolEvent),
+      changedFiles: this.fileTracker.getChangedFiles().map(change => change.filePath).filter(p => !this.runLoopFileSnapshot.has(p)),
+      createdAt: input.createdAt,
+      origin: {
+        projectKey: path.resolve(this.config.cwd),
+        actor: 'main_session',
+        sessionId: this.id,
+        runLoopId: input.runLoopId,
+      },
+    }
+
+    const preflight = classifyHarvestCandidate(candidate)
+    if (preflight.action === 'skip') return
+
+    const harvestMinIntervalMs = this.harvestMinIntervalMs()
+    const scheduled = this.contextScheduler.enqueueBackground(
+      this.config.cwd,
+      'harvest',
+      (signal) => this.runHarvestInBackground(candidate, binding, signal),
+      { minIntervalMs: harvestMinIntervalMs },
+    )
+    if (!scheduled.accepted) {
+      const message = scheduled.reason === 'project_concurrency_limit'
+        ? 'Harvest skipped: another harvest job is already running for this session'
+        : `Harvest skipped: minimum interval ${harvestMinIntervalMs}ms has not elapsed`
+      void this.getContextStore().then(store => store.saveDiagnostic(makeRuntimeContextInfoDiagnostic(message))).catch(() => undefined)
+      return
+    }
+
+    void scheduled.promise
+  }
+
+  private assistantMessagesForHarvestCandidate(userMessage: string, currentAssistantMessages: Message[]): Message[] {
+    if (!isHarvestConfirmationSaveTurn(userMessage)) return currentAssistantMessages
+    if (assistantMessagesContainProjectSummary(currentAssistantMessages)) return currentAssistantMessages
+
+    const currentIds = new Set(currentAssistantMessages.map(message => message.id))
+    const backfill = [...this.messages]
+      .reverse()
+      .filter(message => message.role === 'assistant' && !currentIds.has(message.id))
+      .map(stripThinkingForHarvest)
+      .filter(message => assistantMessagesContainProjectSummary([message]))
+      .slice(0, 1)
+      .reverse()
+
+    return backfill.length > 0 ? [...backfill, ...currentAssistantMessages] : currentAssistantMessages
+  }
+
+  private captureRunLoopModelBinding(): HarvestModelBinding | null {
+    const metadata = this.resolveCurrentSessionModelMetadata()
+    const providerProtocol = this.resolveCurrentProviderProtocol(metadata.protocol)
+    if (!providerProtocol) return null
+    try {
+      return captureHarvestModelBinding({
+        sessionId: this.id,
+        providerProtocol,
+        modelId: this.config.modelConfig.model,
+        modelConfig: sanitizeModelConfigForHarvest(this.config.modelConfig),
+        modelGroupId: this.contextModelGroupId ?? metadata.modelGroupId,
+        baseUrl: this.contextBaseUrl ?? metadata.baseUrl,
+      })
+    } catch (error) {
+      void this.getContextStore().then(store => store.saveDiagnostic(makeRuntimeContextDiagnostic('Harvest model binding capture failed; harvest skipped', error))).catch(() => undefined)
+      return null
+    }
+  }
+
+  private resolveCurrentProviderProtocol(metadataProtocol?: ProviderProtocol | 'openai' | string): ProviderProtocol | null {
+    if (this.contextProtocol) return this.contextProtocol
+    return normalizeProviderProtocol((this as any)._protocol ?? metadataProtocol ?? this.provider.name) ?? null
+  }
+
+  private resolveCurrentSessionModelMetadata(): { protocol?: string; modelGroupId?: string; baseUrl?: string } {
+    return resolveConfiguredModelBindingMetadata(loadAppConfig(), this.history.getSessionModel(this.id), this.config.modelConfig.model)
+  }
+
+  private async runHarvestInBackground(candidate: HarvestCandidate, binding: HarvestModelBinding, signal?: AbortSignal): Promise<void> {
+    try {
+      if (signal?.aborted) throw new Error('context harvest cancelled before start')
+      const maxJobs = this.contextConfig.harvest.maxJobsPerSession
+      if (this.totalHarvestCount >= maxJobs) {
+        const store = await this.getContextStore()
+        await store.saveDiagnostic(makeRuntimeContextInfoDiagnostic(`Harvest skipped: max ${maxJobs} jobs per session reached`))
+        return
+      }
+      this.totalHarvestCount++
+      this.pendingHarvestCount++
+      this.lastHarvestStartedAt = Date.now()
+
+      const store = await this.getContextStore()
+      const enqueued = await enqueueHarvest(candidate, binding, { enabled: this.contextConfig.harvestEnabled, store })
+      if (enqueued.job && enqueued.status === 'queued') {
+        await runHarvestJob(enqueued.job, {
+          store,
+          modelClient: createProviderDistillerModelClient(this.provider, signal),
+          minConfidence: this.contextConfig.memory.minConfidence,
+          trustMode: this.contextConfig.memory.trustMode,
+          timeoutMs: this.contextConfig.harvest.timeoutMs,
+          signal,
+          recorder: this.contextScheduler.recorder,
+          projectKey: this.config.cwd,
+        })
+      }
+    } catch (error) {
+      try {
+        const store = await this.getContextStore()
+        await store.saveDiagnostic(makeRuntimeContextDiagnostic('Harvest failed asynchronously without blocking foreground chat', error))
+      } catch {
+        // Context failures must not escape into foreground chat.
+      }
+      throw error
+    } finally {
+      this.pendingHarvestCount = Math.max(0, this.pendingHarvestCount - 1)
+    }
+  }
+
+  private async getContextStore(): Promise<ContextStore> {
+    if (!this.contextStore) this.contextStore = await openContextStore({ cwd: this.config.cwd })
+    return this.contextStore
+  }
+
+  private harvestMinIntervalMs(): number {
+    return this.contextConfig.harvest.minIntervalMs ?? this.contextPerformanceConfig().harvestMinIntervalMs
   }
 
   private getSystemReminder(): string | null {
@@ -1076,6 +1651,12 @@ export class Session {
     const task = this.backgroundTasks.getTask(taskId)
     if (!task || task.type !== 'team') return null
     const team = this.teamRegistry.get(taskId)
+    if (team && this.teamRegistry.isArchived(taskId)) {
+      const snapshot = this.teamFinalSnapshots.get(taskId)
+      if (snapshot) {
+        return { ...snapshot, status: task.status, finished: true }
+      }
+    }
     if (!team) {
       // Team is no longer in registry (completed/failed and removed). Try the
       // final snapshot we captured the moment it terminated — that way the UI
@@ -1182,27 +1763,175 @@ export class Session {
   }
 }
 
+function normalizeProviderProtocol(protocol?: ProviderProtocol | 'openai' | string): ProviderProtocol | undefined {
+  if (protocol === 'openai') return 'openai-chat'
+  if (protocol === 'anthropic' || protocol === 'openai-chat' || protocol === 'openai-responses') return protocol
+  return undefined
+}
+
+function sanitizeModelConfigForHarvest(modelConfig: ModelConfig): ModelConfig {
+  const sanitized: ModelConfig = {
+    model: modelConfig.model,
+    maxTokens: modelConfig.maxTokens,
+  }
+  if (modelConfig.temperature !== undefined) sanitized.temperature = modelConfig.temperature
+  const systemPrompt = removeContextPromptSegments(modelConfig.systemPrompt)
+  if (systemPrompt !== undefined) sanitized.systemPrompt = systemPrompt
+  if (modelConfig.effort !== undefined) sanitized.effort = modelConfig.effort
+  if (modelConfig.contextWindow !== undefined) sanitized.contextWindow = modelConfig.contextWindow
+  if (modelConfig.compressAt !== undefined) sanitized.compressAt = modelConfig.compressAt
+  if (modelConfig.cacheKey !== undefined) sanitized.cacheKey = modelConfig.cacheKey
+  if (modelConfig.cacheUser !== undefined) sanitized.cacheUser = modelConfig.cacheUser
+  return sanitized
+}
+
+function resolveConfiguredModelBindingMetadata(appConfig: Record<string, any>, sessionModelId: string | null, currentModel: string): { protocol?: string; modelGroupId?: string; baseUrl?: string } {
+  const groups = appConfig.modelGroups?.groups
+  if (!Array.isArray(groups)) return {}
+
+  if (sessionModelId) {
+    const exact = findConfiguredModel(groups, (model) => model.id === sessionModelId || `${model.groupId}:${model.modelId}` === sessionModelId)
+    if (exact) return exact
+  }
+
+  const byModel = groups.flatMap((group: any) => {
+    const models = Array.isArray(group.models) ? group.models : []
+    return models
+      .filter((model: any) => model.modelId === currentModel)
+      .map(() => metadataFromModelGroup(group))
+  })
+  return byModel.length === 1 ? byModel[0] : {}
+}
+
+function findConfiguredModel(groups: any[], predicate: (model: any) => boolean): { protocol?: string; modelGroupId?: string; baseUrl?: string } | undefined {
+  for (const group of groups) {
+    const models = Array.isArray(group.models) ? group.models : []
+    for (const model of models) {
+      if (predicate({ ...model, groupId: group.id })) return metadataFromModelGroup(group)
+    }
+  }
+  return undefined
+}
+
+function metadataFromModelGroup(group: any): { protocol?: string; modelGroupId?: string; baseUrl?: string } {
+  return {
+    protocol: nonEmptyString(group.protocol),
+    modelGroupId: nonEmptyString(group.id),
+    baseUrl: nonEmptyString(group.baseUrl ?? group.baseURL),
+  }
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function appendContextPromptSegment(systemPrompt: ModelConfig['systemPrompt'], renderedPrompt: string): ModelConfig['systemPrompt'] {
+  const segment = { content: renderedPrompt, cacheable: false, puddingContextEngine: true }
+  if (Array.isArray(systemPrompt)) return [...removeContextPromptSegments(systemPrompt) as NonNullable<ModelConfig['systemPrompt']> & Array<{ content: string; cacheable: boolean }>, segment]
+  if (typeof systemPrompt === 'string' && systemPrompt.length > 0) return [{ content: systemPrompt, cacheable: true }, segment]
+  return [segment]
+}
+
+function removeContextPromptSegments(systemPrompt: ModelConfig['systemPrompt']): ModelConfig['systemPrompt'] {
+  if (!Array.isArray(systemPrompt)) return systemPrompt
+  return systemPrompt.filter(segment => {
+    const tagged = segment as { puddingContextEngine?: boolean }
+    return !tagged.puddingContextEngine
+  })
+}
+
+function latestUserText(messages: Message[]): string {
+  const message = [...messages].reverse().find(item => item.role === 'user')
+  if (!message) return ''
+  return message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+}
+
+function textFromContent(content: any[]): string {
+  return content.flatMap(block => block.type === 'text' ? [block.text || ''] : []).join('')
+}
+
+function appendTextContent(content: any[], text: string): void {
+  const lastText = [...content].reverse().find(block => block.type === 'text')
+  if (lastText) {
+    lastText.text = `${lastText.text || ''}${text}`
+    return
+  }
+  content.push({ type: 'text', text })
+}
+
+function stripThinkingForHarvest(message: Message): Message {
+  return { ...message, content: message.content.filter(block => block.type !== 'thinking') }
+}
+
+function toHarvestToolEvent(event: ToolExecutionEvent): { id: string; name?: string; status?: string; [key: string]: unknown } {
+  return { id: event.toolUseId, name: event.toolName, status: event.type, ...event }
+}
+
+function createRunLoopId(sessionId: string, createdAt: number): string {
+  return `run_${createHash('sha1').update(`${sessionId}:${createdAt}:${Math.random()}`).digest('hex').slice(0, 16)}`
+}
+
+function modelResolverUnavailable(modelId: string): RuntimeModelResolution {
+  return {
+    status: 'failed',
+    warning: `Requested model "${modelId}" could not be resolved because no runtime model resolver is configured; using the main session model.`,
+  }
+}
+
+function contextModeFromPlanMode(planMode: Session['getPlanMode'] extends () => infer T ? T : string): ContextRequest['mode'] {
+  if (planMode === 'planning' || planMode === 'awaiting_approval') return 'plan'
+  return 'chat'
+}
+
+function makeRuntimeContextDiagnostic(message: string, error: unknown) {
+  const suffix = error instanceof Error ? `: ${error.message}` : `: ${String(error)}`
+  return {
+    id: `diagnostic_session_context_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    level: 'error' as const,
+    source: 'SessionContextRuntime',
+    message: `${message}${suffix}`,
+    createdAt: Date.now(),
+  }
+}
+
+function makeRuntimeContextInfoDiagnostic(message: string) {
+  return {
+    id: `diagnostic_session_context_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    level: 'info' as const,
+    source: 'SessionContextRuntime',
+    message,
+    createdAt: Date.now(),
+  }
+}
+
 function reorderAssistantContent(content: any[]): any[] {
   if (content.length === 0) return content
 
   const thinkingBlocks: any[] = []
-  const textParts: string[] = []
-  const toolBlocks: any[] = []
+  const toolUseBlocks: any[] = []
+  const otherBlocks: any[] = []
+  let text = ''
 
   for (const block of content) {
     if (block.type === 'thinking') {
-      thinkingBlocks.push(block)
+      const lastThinking = thinkingBlocks[thinkingBlocks.length - 1]
+      if (lastThinking?.type === 'thinking') {
+        lastThinking.thinking += block.thinking || ''
+        if (block.signature) lastThinking.signature = block.signature
+      } else {
+        thinkingBlocks.push({ ...block })
+      }
     } else if (block.type === 'text') {
-      if (block.text) textParts.push(block.text)
+      text += block.text || ''
     } else if (block.type === 'tool_use') {
-      toolBlocks.push(block)
+      toolUseBlocks.push(block)
+    } else {
+      otherBlocks.push(block)
     }
   }
 
-  const result: any[] = [...thinkingBlocks]
-  if (textParts.length > 0) {
-    result.push({ type: 'text', text: textParts.join('\n\n') })
-  }
-  result.push(...toolBlocks)
-  return result
+  const reordered = [...thinkingBlocks]
+  if (text) reordered.push({ type: 'text', text })
+  reordered.push(...toolUseBlocks, ...otherBlocks)
+  return reordered
 }

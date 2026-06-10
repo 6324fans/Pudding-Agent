@@ -64,7 +64,7 @@ export function retrieveContextFacts(options: RetrieveContextFactsOptions): Cont
 }
 
 export function formatContextSection(section: ContextSection): string {
-  const lines = [`# 上下文项目事实`]
+  const lines = [`# 上下文片段`]
   for (const item of section.facts) {
     const label = item.title ? `${item.title}: ` : ''
     const citations = item.citations.length > 0

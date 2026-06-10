@@ -43,18 +43,18 @@ describe('agent-types', () => {
   const mcpTools: ToolDefinition[] = [
     { name: 'file_read', description: '', inputSchema: {} },
     { name: 'grep', description: '', inputSchema: {} },
-    { name: 'ContextSearch', description: '', inputSchema: {} },
-    { name: 'Context', description: '', inputSchema: {} },
+    { name: 'PuddingSearch', description: '', inputSchema: {} },
+    { name: 'PuddingContext', description: '', inputSchema: {} },
     { name: 'mcp__other__do_thing', description: '', inputSchema: {} },
     { name: 'Agent', description: '', inputSchema: {} },
     { name: 'Skill', description: '', inputSchema: {} },
   ]
 
   describe('filterToolsForAgent — MCP whitelisting', () => {
-    it('explore allows built-in Context tools but not unrelated MCP tools', () => {
+    it('explore allows built-in Pudding context tools but not unrelated MCP tools', () => {
       const out = filterToolsForAgent('explore', mcpTools).map(t => t.name)
-      expect(out).toContain('ContextSearch')
-      expect(out).toContain('Context')
+      expect(out).toContain('PuddingSearch')
+      expect(out).toContain('PuddingContext')
       expect(out).not.toContain('mcp__other__do_thing')
     })
 

@@ -101,6 +101,16 @@ export function Sidebar() {
     setConfirmDeleteProjectCwd(null)
   }
 
+  const handleCreateSession = (cwd: string) => {
+    setCollapsedProjects((prev) => {
+      if (!prev.has(cwd)) return prev
+      const next = new Set(prev)
+      next.delete(cwd)
+      return next
+    })
+    createSession(cwd)
+  }
+
   const toggleProject = (cwd: string) => {
     setCollapsedProjects((prev) => {
       const next = new Set(prev)
@@ -144,11 +154,11 @@ export function Sidebar() {
                   <button onClick={() => setConfirmDeleteProjectCwd(null)} className="rounded px-1.5 py-0.5 text-[11px] text-[var(--muted)] hover:text-[var(--text)]">取消</button>
                 </div>
               ) : (
-                <div className="group/project relative mb-1.5 flex items-center">
+                <div className="group/project mb-1.5 flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => toggleProject(project.cwd)}
-                    className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 pr-7 text-left text-[13px] font-medium text-[var(--muted)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-[6px] px-2 py-1 text-left text-[13px] font-medium text-[var(--muted)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
                     aria-expanded={!collapsed}
                   >
                     <span className="w-3 text-[10px]">{collapsed ? '▶' : '▼'}</span>
@@ -157,8 +167,17 @@ export function Sidebar() {
                     <span className="ml-auto text-[10px] text-[var(--muted)]">{project.sessions.length}</span>
                   </button>
                   <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleCreateSession(project.cwd) }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:bg-[var(--surface-2)] hover:text-[var(--accent)]"
+                    aria-label={`在 ${project.name} 中新建会话`}
+                    title="新建会话"
+                  >
+                    <IconPlus size={14} />
+                  </button>
+                  <button
                     onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectCwd(project.cwd) }}
-                    className="absolute right-1 rounded p-1 text-[var(--muted)] opacity-0 transition-all hover:bg-[var(--surface-3)] hover:text-[var(--bad)] group-hover/project:opacity-100"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] text-[var(--muted)] opacity-0 transition-all hover:bg-[var(--surface-3)] hover:text-[var(--bad)] group-hover/project:opacity-100"
                     aria-label="删除项目"
                     title="删除项目"
                   >
@@ -259,12 +278,6 @@ export function Sidebar() {
                   </div>
                 )
               })}
-              <button
-                onClick={() => createSession(project.cwd)}
-                className="w-full text-left px-2.5 py-1.5 text-[12px] text-[var(--muted)] hover:text-[var(--text)] transition-colors rounded-[6px]"
-              >
-                + 新建会话
-              </button>
                 </div>
               )}
             </div>

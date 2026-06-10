@@ -4,14 +4,16 @@ import { v4 as uuid } from 'uuid'
 import path from 'node:path'
 import { RingBuffer } from './team/team-mailbox.js'
 import type { TeamEvent, TeamMemberSpec, TeamMessage } from './team/team-types.js'
-import { findGitBash } from './utils/shell-detection.js'
+import { findGitBash, findPowerShell } from './utils/shell-detection.js'
 
 export type TaskType = 'shell' | 'agent' | 'team'
+export type BackgroundShell = 'bash' | 'powershell'
 
 export interface BackgroundTask {
   id: string
   type: TaskType
   command?: string
+  shell?: BackgroundShell
   prompt?: string
   agentType?: string
   pid: number
@@ -63,7 +65,7 @@ export class BackgroundTaskManager {
     if (next) next.resolve()
   }
 
-  spawn(command: string, cwd: string, env?: Record<string, string>): BackgroundTask {
+  spawn(command: string, cwd: string, env?: Record<string, string>, shell?: BackgroundShell): BackgroundTask {
     const id = uuid().slice(0, 8)
     const logFile = path.join(this.logDir, `${id}.log`)
     writeFileSync(logFile, '')
@@ -72,7 +74,10 @@ export class BackgroundTaskManager {
     let shellCmd: string
     let shellArgs: string[]
 
-    if (isWindows) {
+    if (isWindows && shell === 'powershell') {
+      shellCmd = findPowerShell() ?? 'powershell.exe'
+      shellArgs = ['-NoProfile', '-NonInteractive', '-Command', command]
+    } else if (isWindows) {
       const gitBashPath = findGitBash()
       if (gitBashPath) {
         shellCmd = gitBashPath
@@ -100,6 +105,7 @@ export class BackgroundTaskManager {
       id,
       type: 'shell',
       command,
+      shell,
       pid: proc.pid || 0,
       status: 'running',
       logFile,

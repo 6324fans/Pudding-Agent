@@ -27,6 +27,7 @@ function inspectPayload(sessionId: string, inspectedAt: number): ContextInspectS
       storedFactCount: 0,
       providerFactCount: 0,
     },
+    projectUnderstandingFacts: [],
     providerHealth: [],
     memoryReview: {
       memoryDir: `/repo/${sessionId}/memory`,

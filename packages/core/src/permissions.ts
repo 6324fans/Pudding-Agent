@@ -14,12 +14,14 @@ const READ_ONLY_TOOLS = new Set([
   'task_create', 'task_get', 'task_list', 'task_update', 'task_stop',
   'todo_write', 'lsp', 'web_fetch', 'web_search', 'weather', 'browser_open', 'ask_user',
   'list_mcp_resources', 'read_mcp_resource', 'skill', 'skill_list', 'Skill',
-  'Context', 'ContextSearch', 'ContextNode', 'ContextCallers', 'ContextCallees',
-  'ContextImpact', 'ContextTrace', 'ContextExplore', 'ContextFiles',
+  'PuddingContext', 'PuddingSearch', 'PuddingNode', 'PuddingCallers', 'PuddingCallees',
+  'PuddingImpact', 'PuddingTrace', 'PuddingExplore', 'PuddingFiles',
+  'PuddingMemorySearch',
 ])
 
 const WRITE_TOOLS = new Set([
   'bash', 'file_write', 'file_edit', 'notebook_edit', 'agent',
+  'PuddingMemoryWrite',
 ])
 
 const CRITICAL_PATTERNS = [
@@ -220,15 +222,17 @@ export const DEFAULT_RULES: PermissionRule[] = [
   { tool: 'grep', decision: 'allow' },
   { tool: 'ls', decision: 'allow' },
   { tool: 'tree', decision: 'allow' },
-  { tool: 'Context', decision: 'allow' },
-  { tool: 'ContextSearch', decision: 'allow' },
-  { tool: 'ContextNode', decision: 'allow' },
-  { tool: 'ContextCallers', decision: 'allow' },
-  { tool: 'ContextCallees', decision: 'allow' },
-  { tool: 'ContextImpact', decision: 'allow' },
-  { tool: 'ContextTrace', decision: 'allow' },
-  { tool: 'ContextExplore', decision: 'allow' },
-  { tool: 'ContextFiles', decision: 'allow' },
+  { tool: 'PuddingContext', decision: 'allow' },
+  { tool: 'PuddingSearch', decision: 'allow' },
+  { tool: 'PuddingNode', decision: 'allow' },
+  { tool: 'PuddingCallers', decision: 'allow' },
+  { tool: 'PuddingCallees', decision: 'allow' },
+  { tool: 'PuddingImpact', decision: 'allow' },
+  { tool: 'PuddingTrace', decision: 'allow' },
+  { tool: 'PuddingExplore', decision: 'allow' },
+  { tool: 'PuddingFiles', decision: 'allow' },
+  { tool: 'PuddingMemorySearch', decision: 'allow' },
+  { tool: 'PuddingMemoryWrite', decision: 'ask' },
   { tool: 'bash', decision: 'ask' },
   { tool: 'file_write', decision: 'ask' },
   { tool: 'file_edit', decision: 'ask' },

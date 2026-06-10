@@ -67,6 +67,7 @@ export interface ContextInspectSnapshot {
     storedFactCount: number
     providerFactCount: number
   }
+  projectUnderstandingFacts: contextV2.ContextFact[]
   providerHealth: ContextProviderHealthItem[]
   memoryReview: {
     memoryDir: string
@@ -827,15 +828,20 @@ export class SessionManager {
       storedFacts = await store.listFacts({ limit: 200 })
     }
 
+    const retrievalFacts = dedupeContextFacts([...storedFacts, ...providerResult.facts])
     const retrieval = contextV2.retrieveContextFacts({
       userMessage: query,
-      facts: [...storedFacts, ...providerResult.facts],
+      facts: retrievalFacts,
       maxFacts: 8,
       tokenBudget: 900,
+      excludeKinds: ['conversation'],
     })
 
     const memoryIndex = await loadMemoryIndex(meta.cwd)
     const diagnostics = dedupeStrings(providerResult.diagnostics)
+    const projectUnderstandingFacts = dedupeContextFacts(providerResult.facts
+      .filter(isProjectUnderstandingFact)
+    ).slice(0, 25)
     const snapshot: ContextInspectSnapshot = {
       status: 'ready',
       sessionId,
@@ -850,6 +856,7 @@ export class SessionManager {
         storedFactCount: storedFacts.length,
         providerFactCount: providerResult.facts.length,
       },
+      projectUnderstandingFacts,
       providerHealth: buildProviderHealth({
         storedFacts,
         providerFacts: providerResult.facts,
@@ -863,7 +870,7 @@ export class SessionManager {
         available: Boolean(memoryIndex),
         lineCount: memoryIndex ? memoryIndex.split('\n').length : 0,
         preview: memoryIndex ? memoryIndex.slice(0, 4000) : '',
-        storedProjectFacts: storedFacts.filter((fact) => fact.scope === 'project').slice(0, 25),
+        storedProjectFacts: dedupeContextFacts(storedFacts.filter((fact) => fact.scope === 'project')).slice(0, 25),
       },
       diagnostics,
     }
@@ -1167,6 +1174,36 @@ function dedupeStrings(values: string[]): string[] {
     result.push(normalized)
   }
   return result
+}
+
+function isProjectUnderstandingFact(fact: contextV2.ContextFact): boolean {
+  if (fact.scope !== 'project') return false
+  if (fact.source === 'context-v2-project-provider') return true
+  if (fact.kind === 'repo_wiki') return true
+  if (fact.tags?.some((tag) => tag === 'project' || tag === 'package' || tag === 'repo_wiki')) return true
+  return false
+}
+
+function dedupeContextFacts(facts: contextV2.ContextFact[]): contextV2.ContextFact[] {
+  const seen = new Set<string>()
+  const result: contextV2.ContextFact[] = []
+  for (const fact of facts) {
+    const key = fact.id || [
+      fact.source,
+      fact.title ?? '',
+      fact.kind,
+      fact.scope,
+      normalizeFactContent(fact.content),
+    ].join('\u0000')
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(fact)
+  }
+  return result
+}
+
+function normalizeFactContent(content: string): string {
+  return content.replace(/\s+/g, ' ').trim().slice(0, 500)
 }
 
 function buildProviderHealth(input: {

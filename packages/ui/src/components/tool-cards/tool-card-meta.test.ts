@@ -3,6 +3,7 @@ import {
   formatToolLabel,
   getToolCardKind,
   getToolFamily,
+  hasMissingRequiredArgumentInput,
   missingRequiredArgumentMessage,
 } from './tool-card-meta'
 
@@ -25,7 +26,10 @@ describe('tool-card-meta', () => {
     expect(getToolCardKind('mcp__filesystem__read_file')).toBe('mcp')
   })
 
-  it('formats labels without introducing a JDC family', () => {
+  it('routes project context tools without changing GitNexus cards', () => {
+    expect(getToolFamily('PuddingContext')).toBe('pudding')
+    expect(getToolCardKind('PuddingContext')).toBe('pudding')
+    expect(getToolCardKind('PuddingMemorySearch')).toBe('pudding')
     expect(getToolFamily('gitnexus_query')).toBe('context')
     expect(formatToolLabel('team_add_task')).toBe('TEAM ADD TASK')
   })
@@ -35,5 +39,13 @@ describe('tool-card-meta', () => {
     expect(missingRequiredArgumentMessage('Error: pattern is required')).toBe('缺少搜索条件')
     expect(missingRequiredArgumentMessage('Error: workspace_id is required')).toBe('缺少必填参数 workspace_id')
     expect(missingRequiredArgumentMessage('Error: invalid regex')).toBeNull()
+  })
+
+  it('detects missing required arguments for noisy read/search cards', () => {
+    expect(hasMissingRequiredArgumentInput('file_read', {})).toBe(true)
+    expect(hasMissingRequiredArgumentInput('file_read', { file_path: 'src/index.ts' })).toBe(false)
+    expect(hasMissingRequiredArgumentInput('grep', { pattern: '   ' })).toBe(true)
+    expect(hasMissingRequiredArgumentInput('glob', { pattern: '**/*.ts' })).toBe(false)
+    expect(hasMissingRequiredArgumentInput('ls', {})).toBe(false)
   })
 })

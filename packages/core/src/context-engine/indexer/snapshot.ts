@@ -83,7 +83,7 @@ async function ensureSnapshotIgnored(cwd: string): Promise<void> {
       const already = content
         .split('\n')
         .map((l) => l.trim())
-        .some((l) => l === '.puddingagent' || l === '.puddingagent/' || l === '.jdcagnet' || l === '.jdcagnet/')
+        .some((l) => l === '.puddingagent' || l === '.puddingagent/')
       if (already) return
       const suffix = content.length > 0 && !content.endsWith('\n') ? '\n' : ''
       await appendFile(gitignorePath, `${suffix}${IGNORE_ENTRY}\n`)

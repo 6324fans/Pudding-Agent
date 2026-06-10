@@ -25,7 +25,7 @@ describe('context-v2 retriever', () => {
           id: 'invoice',
           kind: 'project',
           title: 'Invoice tax migration',
-          content: 'Invoice tax migration must preserve JDC compatibility.',
+          content: 'Invoice tax migration must preserve Pudding compatibility.',
           citations: [{ id: 'invoice-doc', type: 'file', ref: 'docs/invoice.md' }],
           tags: ['invoice', 'tax'],
           confidence: 0.95,

@@ -12,6 +12,7 @@ export type ToolFamily =
   | 'external'
   | 'mcp'
   | 'mutation'
+  | 'pudding'
   | 'read'
   | 'search'
   | 'skill'
@@ -27,11 +28,28 @@ export type ToolCardKind =
   | 'mcp'
   | 'multi-edit'
   | 'notebook-edit'
+  | 'pudding'
   | 'read'
   | 'search'
   | 'skill'
   | 'task'
   | 'write'
+
+const PUDDING_TOOLS = new Set([
+  'PuddingContext',
+  'PuddingSearch',
+  'PuddingNode',
+  'PuddingCallers',
+  'PuddingCallees',
+  'PuddingImpact',
+  'PuddingTrace',
+  'PuddingExplore',
+  'PuddingFiles',
+  'PuddingMemorySearch',
+  'PuddingMemoryWrite',
+  'PuddingContextInspect',
+  'PuddingContextRefresh',
+])
 
 const COMMAND_TOOLS = new Set(['bash', 'powershell', 'monitor'])
 const MUTATION_TOOLS = new Set(['file_write', 'file_edit', 'multi_edit', 'notebook_edit'])
@@ -61,15 +79,6 @@ const TASK_TOOLS = new Set([
   'todo_write',
 ])
 const CONTEXT_TOOLS = new Set([
-  'Context',
-  'ContextSearch',
-  'ContextNode',
-  'ContextCallers',
-  'ContextCallees',
-  'ContextImpact',
-  'ContextTrace',
-  'ContextExplore',
-  'ContextFiles',
   'gitnexus',
 ])
 
@@ -85,6 +94,7 @@ export function deriveToolStatus(
 }
 
 export function getToolFamily(toolName: string): ToolFamily {
+  if (PUDDING_TOOLS.has(toolName) || toolName.startsWith('Pudding')) return 'pudding'
   if (/^mcp__[^_]+__.+$/.test(toolName)) return 'mcp'
   if (toolName === 'Agent') return 'agent'
   if (toolName === 'Skill') return 'skill'
@@ -99,6 +109,7 @@ export function getToolFamily(toolName: string): ToolFamily {
 }
 
 export function getToolCardKind(toolName: string): ToolCardKind {
+  if (PUDDING_TOOLS.has(toolName) || toolName.startsWith('Pudding')) return 'pudding'
   if (/^mcp__[^_]+__.+$/.test(toolName)) return 'mcp'
 
   switch (toolName) {
@@ -166,4 +177,23 @@ export function missingRequiredArgumentMessage(content: string): string | null {
   const match = /^Error:\s+([A-Za-z0-9_]+)\s+is required\b/.exec(content.trim())
   if (!match) return null
   return MISSING_REQUIRED_ARGUMENT_MESSAGES[match[1]] || `缺少必填参数 ${match[1]}`
+}
+
+export function hasMissingRequiredArgumentInput(toolName: string, input: Record<string, unknown> | undefined): boolean {
+  const required = REQUIRED_ARGUMENTS_BY_TOOL[toolName]
+  if (!required) return false
+  return required.some((name) => isMissingRequiredValue(input?.[name]))
+}
+
+const REQUIRED_ARGUMENTS_BY_TOOL: Record<string, string[]> = {
+  file_read: ['file_path'],
+  grep: ['pattern'],
+  glob: ['pattern'],
+}
+
+function isMissingRequiredValue(value: unknown): boolean {
+  if (value == null) return true
+  if (typeof value === 'string') return value.trim().length === 0
+  if (Array.isArray(value)) return value.length === 0
+  return false
 }

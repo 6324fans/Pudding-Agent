@@ -11,15 +11,15 @@ export interface AgentTypeDefinition {
 }
 
 const CONTEXT_ENGINE_TOOLS = [
-  'Context',
-  'ContextSearch',
-  'ContextNode',
-  'ContextCallers',
-  'ContextCallees',
-  'ContextImpact',
-  'ContextTrace',
-  'ContextExplore',
-  'ContextFiles',
+  'PuddingContext',
+  'PuddingSearch',
+  'PuddingNode',
+  'PuddingCallers',
+  'PuddingCallees',
+  'PuddingImpact',
+  'PuddingTrace',
+  'PuddingExplore',
+  'PuddingFiles',
 ]
 
 export const AGENT_TYPES: AgentTypeDefinition[] = [

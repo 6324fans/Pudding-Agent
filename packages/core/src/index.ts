@@ -66,6 +66,42 @@ export { BackgroundTaskManager, type BackgroundTask, type TaskType } from './bac
 export { getNonInteractiveEnv } from './tools/bash.js'
 export { createTaskOutputTool } from './tools/task-output.js'
 export { monitorTool } from './tools/monitor.js'
+export {
+  inspectContext,
+  createContextInspectTool,
+  inspectableBundle,
+  inspectableSection,
+  type ContextInspectPayload,
+  type InspectContextInput,
+  type InspectContextOptions,
+  type RejectedCandidateRecord,
+} from './tools/context-inspect.js'
+export {
+  refreshContextProviders,
+  getContextProviderHealth,
+  createContextRefreshTool,
+  type ContextRefreshInput,
+  type ContextRefreshPayload,
+  type RefreshContextOptions,
+} from './tools/context-refresh.js'
+export {
+  searchMemoryRecords,
+  createMemorySearchTool,
+  type MemorySearchInput,
+  type MemorySearchPayload,
+  type MemorySearchOptions,
+  type MemorySearchResult,
+} from './tools/memory-search.js'
+export {
+  buildConstraintObservabilitySnapshot,
+  type BuildConstraintObservabilitySnapshotInput,
+  type ConstraintContextHealthSummary,
+  type ConstraintEvidenceSummary,
+  type ConstraintModelProfileSummary,
+  type ConstraintObservabilitySnapshot,
+  type ConstraintObservabilityStatus,
+  type ConstraintVerificationSummary,
+} from './constraints/observability.js'
 export { AGENT_TYPES, getAgentType, filterToolsForAgent, isWriteAllowedForPlanAgent, isBashAllowedForAuditor, type AgentTypeDefinition } from './agent-types.js'
 export { createEnterPlanModeTool, isPlanModeToolAllowed, PLAN_MODE_ALLOWED_TOOLS, type PlanModeCallback } from './tools/enter-plan-mode.js'
 export { createExitPlanModeTool, type PlanReviewCallback } from './tools/exit-plan-mode.js'

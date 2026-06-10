@@ -2,13 +2,11 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/session-store'
 import { useBackgroundTaskStore, type BackgroundTaskItem } from '../stores/background-task-store'
 import { useTeamStore } from '../stores/team-store'
-import { useContextStore, type ContextRequestState } from '../stores/context-store'
-import { ipc, type ContextInspectSnapshot, type ContextRefreshSnapshot, type VerificationInspectSnapshot } from '../lib/ipc-client'
+import { useContextStore } from '../stores/context-store'
+import { ipc } from '../lib/ipc-client'
 import { IconTasks, IconQueue, IconUsage, IconFiles, IconSession, IconX, IconTeam, IconContext } from './icons'
 import { TeamDetailPanel } from './TeamDetailPanel'
-import { ContextCurrentPanel } from './context/ContextCurrentPanel'
-import { ContextAdvancedDiagnosticsPanel } from './context/ContextAdvancedDiagnosticsPanel'
-import { VerificationStatusPanel } from './context/VerificationStatusPanel'
+import { ContextPanel } from './context/ContextPanel'
 
 interface FileChange {
   filePath: string
@@ -83,11 +81,8 @@ export function Inspector() {
   const activeTeamId = useTeamStore((s) => s.activeTeamId)
   const setActiveTeam = useTeamStore((s) => s.setActiveTeam)
   const contextInspect = useContextStore((s) => s.inspect)
-  const contextRefresh = useContextStore((s) => s.refresh)
   const contextVerification = useContextStore((s) => s.verification)
   const loadProjectContext = useContextStore((s) => s.loadProjectContext)
-  const refreshContext = useContextStore((s) => s.refreshContext)
-  const loadVerification = useContextStore((s) => s.loadVerification)
 
   const currentState = activeSessionId ? sessionStates[activeSessionId] : undefined
   const usage = currentState?.usage
@@ -229,7 +224,7 @@ export function Inspector() {
   const taskBadgeColor = tasks.length > 0 && pendingCount === 0 && bgRunning === 0 ? 'var(--good)' : undefined
   const teamBadge = bgTeams.length > 0 ? bgTeams.length : null
   const teamBadgeColor = teamRunning > 0 ? 'var(--accent)' : 'var(--good)'
-  const contextWarningCount = (contextInspect.data?.providerHealth.filter(provider => provider.status !== 'ok').length ?? 0)
+  const contextWarningCount = (contextInspect.data?.providerHealth.filter(provider => !isHealthyContextProviderStatus(provider.status)).length ?? 0)
     + (contextVerification.data?.changedFiles.filter(file => file.status !== 'verified').length ?? 0)
     + (contextVerification.data?.requirements.filter(requirement => requirement.status !== 'passed').length ?? 0)
     + (contextVerification.data?.policyEvents.length ?? 0)
@@ -329,7 +324,7 @@ export function Inspector() {
         ))}
       </div>
 
-      {/* Section content — Team section uses full panel without inner padding */}
+      {/* Section content — Team/Context sections use full panel without inner padding */}
       {activeSection === 'team' ? (
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {effectiveTeamId && activeSessionId ? (
@@ -344,21 +339,14 @@ export function Inspector() {
             </div>
           )}
         </div>
+      ) : activeSection === 'context' ? (
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <ContextPanel sessionId={activeSessionId} />
+        </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto p-3">
           {activeSection === 'session' && <SessionSection sessionId={activeSessionId} />}
           {activeSection === 'usage' && <UsageSection usage={usage} />}
-          {activeSection === 'context' && (
-            <ContextDiagnosticsSection
-              sessionId={activeSessionId}
-              inspect={contextInspect}
-              refresh={contextRefresh}
-              verification={contextVerification}
-              onReload={() => activeSessionId && loadProjectContext(activeSessionId)}
-              onRefreshProviders={() => activeSessionId && refreshContext(activeSessionId)}
-              onReloadVerification={() => activeSessionId && loadVerification(activeSessionId)}
-            />
-          )}
           {activeSection === 'tasks' && (
             <TasksSection
               tasks={tasks}
@@ -382,6 +370,10 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   )
 }
 
+function isHealthyContextProviderStatus(status: string): boolean {
+  return status === 'enabled' || status === 'fresh' || status === 'cached'
+}
+
 function SessionSection({ sessionId }: { sessionId: string | null }) {
   return (
     <div>
@@ -389,46 +381,6 @@ function SessionSection({ sessionId }: { sessionId: string | null }) {
       <p className="text-[12px] font-[var(--font-mono)] font-mono text-[var(--text)]">
         {sessionId ? sessionId.slice(0, 8) : '无'}
       </p>
-    </div>
-  )
-}
-
-function ContextDiagnosticsSection({ sessionId, inspect, refresh, verification, onReload, onRefreshProviders, onReloadVerification }: {
-  sessionId: string | null
-  inspect: ContextRequestState<ContextInspectSnapshot>
-  refresh: ContextRequestState<ContextRefreshSnapshot>
-  verification: ContextRequestState<VerificationInspectSnapshot>
-  onReload: () => void
-  onRefreshProviders: () => void
-  onReloadVerification: () => void
-}) {
-  if (!sessionId) {
-    return (
-      <div>
-        <SectionHeader>上下文</SectionHeader>
-        <p className="text-[12px] text-[var(--muted)]">暂无会话</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <ContextCurrentPanel
-        snapshot={inspect.data}
-        loading={inspect.loading}
-        error={inspect.error}
-        onReload={onReload}
-      />
-      <VerificationStatusPanel
-        verification={verification}
-        onReload={onReloadVerification}
-      />
-      <ContextAdvancedDiagnosticsPanel
-        inspect={inspect}
-        refresh={refresh}
-        onReloadDiagnostics={onReload}
-        onRefreshProviders={onRefreshProviders}
-      />
     </div>
   )
 }

@@ -1,0 +1,636 @@
+import type { ConstraintObservabilitySnapshot, ContextInspectPayload, MemorySearchPayload } from '@puddingagent/core'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { useContextStore, type ContextProviderHealth } from '../../stores/context-store'
+import { ContextAdvancedDiagnosticsPanel } from './ContextAdvancedDiagnosticsPanel'
+import { ContextCurrentPanel } from './ContextCurrentPanel'
+import { ContextFactsPanel } from './ContextFactsPanel'
+import { ContextInspectPanel } from './ContextInspectPanel'
+import { ContextPanelLayout } from './ContextPanelLayout'
+import { HarvestQueuePanel } from './HarvestQueuePanel'
+import { MemoryReviewPanel } from './MemoryReviewPanel'
+import { ProviderHealthPanel } from './ProviderHealthPanel'
+
+const payload: ContextInspectPayload = {
+  status: 'available',
+  inspectedAt: 1_700_000_000_000,
+  bundle: {
+    id: 'bundle-1',
+    sessionId: 'sess-1',
+    requestHash: 'hash-1',
+    createdAt: 1_700_000_000_000,
+    sections: [
+      {
+        id: 'section-1',
+        kind: 'relevant_code',
+        title: 'Relevant code',
+        content: 'Use the context panel.',
+        citations: [{ id: 'cite-1', type: 'file', ref: 'src/app.ts', line: 12 }],
+        priority: 10,
+        confidence: 0.92,
+        freshness: 'live',
+        sourceProvider: 'code',
+        tokenEstimate: 42,
+        tokenCost: { tokenEstimate: 42, source: 'estimator', droppedTokens: 3 },
+      },
+    ],
+    citations: [{ id: 'cite-1', type: 'file', ref: 'src/app.ts', line: 12 }],
+    diagnostics: [],
+    budget: { maxTokens: 1000, usedTokens: 42, droppedTokens: 3 },
+  },
+  acceptedProjectFacts: [
+    {
+      id: 'project-rule-1',
+      kind: 'workflow_rule',
+      scope: 'project',
+      content: '发布前运行 pnpm build。',
+      citations: [{ id: 'cite-fact-1', type: 'message', ref: 'sess-1/run-accepted', timestamp: 1_700_000_000_000 }],
+      confidence: 0.91,
+      freshness: 'cached',
+      sourceProvider: 'harvest',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_100,
+    },
+    {
+      id: 'team-result-1',
+      kind: 'artifact_summary',
+      scope: 'project',
+      content: 'Checkout task fixed validation handling.',
+      citations: [{ id: 'cite-team-1', type: 'task', ref: 'task_checkout' }],
+      confidence: 0.94,
+      freshness: 'recent',
+      sourceProvider: 'TeamLedger',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_100,
+    },
+  ],
+  droppedSections: [],
+  providerHealth: [
+    { id: 'code', status: 'enabled', updatedAt: 1_700_000_000_000 },
+    { id: 'memory', status: 'stale', updatedAt: 1_700_000_000_100 },
+    { id: 'git', status: 'failed', updatedAt: 1_700_000_000_200, diagnostic: { id: 'diag-1', level: 'error', source: 'git', message: 'git unavailable', createdAt: 1_700_000_000_200 } },
+    { id: 'ide', status: 'rate_limited', updatedAt: 1_700_000_000_300 },
+  ],
+  providerTimings: [
+    { id: 'code', startedAt: 1_700_000_000_000, completedAt: 1_700_000_000_010, durationMs: 10, status: 'enabled' },
+  ],
+  harvestQueue: {
+    jobs: [
+      {
+        id: 'job-1',
+        sessionId: 'sess-1',
+        runLoopId: 'run-1',
+        status: 'skipped',
+        candidate: {
+          sessionId: 'sess-1',
+          runLoopId: 'run-1',
+          userMessage: 'hello',
+          assistantMessages: [],
+          toolEvents: [],
+          changedFiles: [],
+          createdAt: 1_700_000_000_000,
+        },
+        decision: { action: 'skip', reason: 'no_new_fact' },
+        modelBinding: {
+          sessionId: 'sess-1',
+          providerProtocol: 'openai-chat',
+          modelId: 'gpt-test',
+          modelConfig: { model: 'gpt-test', maxTokens: 1000 },
+        },
+        createdAt: 1_700_000_000_000,
+        updatedAt: 1_700_000_000_500,
+      },
+    ],
+    summary: { queued: 0, classified: 0, distilling: 0, validating: 0, accepted: 2, rejected: 1, skipped: 1, failed: 1, pending_review: 0 },
+  },
+  memoryReview: {
+    rejected: [
+      {
+        id: 'candidate-1',
+        sessionId: 'sess-1',
+        status: 'rejected',
+        candidate: { content: 'uncited fact' },
+        rejectionReason: 'Missing citations',
+        validationErrors: ['citation required'],
+        createdAt: 1_700_000_000_000,
+        expiresAt: 1_700_086_400_000,
+      },
+    ],
+  },
+  diagnostics: [],
+  schemaInfo: { version: 3, dbPath: '/repo/.puddingagent/context-engine/context.db' },
+}
+
+const acceptedMemory: MemorySearchPayload = {
+  status: 'available',
+  searchedAt: 1_700_000_001_000,
+  query: { limit: 50 },
+  results: [
+    {
+      id: 'fact-1',
+      kind: 'workflow_hint',
+      scope: 'project',
+      content: 'Accepted facts are durable only after citation validation.',
+      citations: [{ id: 'cite-memory-1', type: 'message', ref: 'sess-1/run-1', timestamp: 1_700_000_000_000 }],
+      confidence: 0.87,
+      freshness: 'cached',
+      sourceProvider: 'harvest',
+      createdAt: 1_700_000_000_500,
+      updatedAt: 1_700_000_000_700,
+      expiresAt: 1_700_086_400_000,
+    },
+  ],
+  diagnostics: [],
+}
+
+const extendedProviders: ContextProviderHealth = [
+  {
+    id: 'code',
+    status: 'indexing',
+    updatedAt: 1_700_000_000_400,
+    progress: { scanned: 12, total: 20, label: 'Indexing cached code graph', fromSnapshot: true },
+    backgroundJob: { id: 'reindex-1', status: 'running', queuedAt: 1_700_000_000_350, startedAt: 1_700_000_000_360 },
+  },
+  { id: 'memory', status: 'cached', updatedAt: 1_700_000_000_500 },
+  { id: 'git', status: 'timeout', updatedAt: 1_700_000_000_600 },
+  { id: 'project', status: 'not_indexed', updatedAt: 1_700_000_000_700 },
+]
+
+const constraintSnapshot: ConstraintObservabilitySnapshot = {
+  status: 'needs_verification',
+  inspectedAt: 1_700_000_000_000,
+  cwd: '/repo',
+  intent: 'code_edit',
+  objective: 'Fix login bug',
+  modelProfile: { id: 'strict_tool_grounding', evidenceStrictness: 'strict', maxParallelToolCalls: 2 },
+  summary: { primary: '修改等待验证', secondary: '1 个文件需要验证。' },
+  evidence: { status: 'not_required', missing: [] },
+  blockedActions: [],
+  verification: {
+    status: 'pending',
+    changedFiles: [{ filePath: 'src/app.ts', changedByToolUseId: 'edit_1', changedAt: 1, status: 'pending', updatedAt: 1 }],
+    requirements: [],
+    commands: [],
+  },
+  contextHealth: { status: 'available', latestBundleId: 'bundle-1', providerCount: 4, unhealthyProviderCount: 2, diagnostics: [] },
+  policyEvents: [],
+}
+
+describe('context inspectability panels', () => {
+  beforeEach(() => {
+    useContextStore.getState().reset()
+  })
+
+  it('renders a Chinese-first automatic observability shell without primary debug controls', () => {
+    const html = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="status"
+        onTabChange={() => {}}
+        inspect={request(payload)}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        advancedVisible
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(html).toContain('Pudding 上下文引擎')
+    expect(html).toContain('项目理解')
+    expect(html).toContain('项目记忆')
+    expect(html).toContain('当前上下文')
+    expect(html).toContain('团队沉淀')
+    expect(html).toContain('约束状态')
+    expect(html).toContain('context-panel-scroll')
+    expect(html).not.toContain('高级诊断</button>')
+    expect(html).not.toContain('Inspect')
+    expect(html).not.toContain('Harvest')
+    expect(html).not.toContain('Memory')
+    expect(html).not.toContain('Health')
+    expect(html).not.toContain('Read cached view')
+    expect(html).not.toContain('Read cached health')
+    expect(html).not.toContain('重新读取诊断')
+    expect(html).not.toContain('后台重建代码索引')
+    expect(html).not.toContain('读取提供方状态')
+  })
+
+  it('uses the same deduped count for the project memory tab and panel content', () => {
+    const duplicatedAcceptedMemory: MemorySearchPayload = {
+      ...acceptedMemory,
+      results: payload.acceptedProjectFacts.map((fact) => ({
+        id: fact.id,
+        kind: fact.kind === 'workflow_rule' ? 'project_convention' : 'workflow_hint',
+        scope: 'project',
+        content: fact.content,
+        citations: fact.citations,
+        confidence: fact.confidence,
+        freshness: fact.freshness,
+        sourceProvider: fact.sourceProvider,
+        createdAt: fact.createdAt,
+        updatedAt: fact.updatedAt,
+        expiresAt: fact.expiresAt,
+      })),
+    }
+    const html = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="facts"
+        onTabChange={() => {}}
+        inspect={request(payload)}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: duplicatedAcceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(html).toMatch(/项目记忆<span[^>]*>2<\/span>/)
+    expect(html).toContain('2 条已接受事实')
+    expect(html).not.toMatch(/项目记忆<span[^>]*>4<\/span>/)
+  })
+
+  it('keeps manual diagnostics and provider controls inside the advanced tab', () => {
+    const html = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="advanced"
+        onTabChange={() => {}}
+        inspect={request({ ...payload, advancedDiagnostics: { rejected: payload.memoryReview.rejected, diagnostics: payload.diagnostics, harvestJobs: payload.harvestQueue.jobs, noop: { rejected: 2, diagnostics: 3, harvestJobs: 4 } } })}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        advancedVisible
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(html).toContain('重新读取诊断')
+    expect(html).toContain('后台重建代码索引')
+    expect(html).toContain('读取提供方状态')
+    expect(html).toContain('已折叠空结果记录')
+    expect(html).toContain('job-1')
+    expect(html).toContain('reindex-1')
+  })
+
+  it('gates advanced diagnostics behind an explicit advanced flag', () => {
+    const hidden = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="advanced"
+        onTabChange={() => {}}
+        inspect={request({ ...payload, advancedDiagnostics: { rejected: payload.memoryReview.rejected, diagnostics: payload.diagnostics, harvestJobs: payload.harvestQueue.jobs, noop: { rejected: 2, diagnostics: 3, harvestJobs: 4 } } })}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        advancedVisible={false}
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(hidden).not.toContain('高级诊断')
+    expect(hidden).not.toContain('重新读取诊断')
+    expect(hidden).not.toContain('job-1')
+    expect(hidden).not.toContain('candidate-1')
+
+    const visible = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="advanced"
+        onTabChange={() => {}}
+        inspect={request({ ...payload, advancedDiagnostics: { rejected: payload.memoryReview.rejected, diagnostics: payload.diagnostics, harvestJobs: payload.harvestQueue.jobs, noop: { rejected: 2, diagnostics: 3, harvestJobs: 4 } } })}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        advancedVisible
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(visible).toContain('高级诊断')
+    expect(visible).toContain('重新读取诊断')
+  })
+
+  it('renders accepted project understanding facts with confidence and freshness', () => {
+    const html = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="understanding"
+        onTabChange={() => {}}
+        inspect={request(payload)}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(html).toContain('项目理解')
+    expect(html).toContain('发布前运行 pnpm build。')
+    expect(html).toContain('工作流规则')
+    expect(html).toContain('可信度')
+    expect(html).toContain('91%')
+    expect(html).toContain('新鲜度')
+    expect(html).toContain('已缓存')
+    expect(html).not.toContain('Missing citations')
+    expect(html).not.toContain('Provider code exceeded context budget')
+  })
+
+  it('renders aggregate engine status without raw provider diagnostics', () => {
+    const noisyPayload: ContextInspectPayload = {
+      ...payload,
+      providerHealth: payload.providerHealth,
+      diagnostics: [
+        { id: 'diag-ide', level: 'warning', source: 'IdeSignalProvider', message: 'IDE snapshot is unavailable; IDE provider returned stale degraded context.', createdAt: 1_700_000_000_000 },
+      ],
+      bundle: payload.bundle
+        ? {
+            ...payload.bundle,
+            diagnostics: [
+              { id: 'diag-code', level: 'warning', source: 'ContextProvider:code', message: 'Provider code exceeded context budget; returning degraded context.', createdAt: 1_700_000_000_000 },
+            ],
+          }
+        : null,
+    }
+    const html = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="status"
+        onTabChange={() => {}}
+        inspect={request(noisyPayload)}
+        harvest={request(noisyPayload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: noisyPayload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(html).toContain('引擎状态')
+    expect(html).toContain('本轮已注入')
+    expect(html).toContain('项目事实')
+    expect(html).toContain('提供方可用')
+    expect(html).not.toContain('git unavailable')
+    expect(html).not.toContain('IdeSignalProvider')
+    expect(html).not.toContain('Provider code exceeded context budget')
+  })
+
+  it('renders team-derived project facts in a dedicated team panel', () => {
+    const html = renderToStaticMarkup(
+      <ContextPanelLayout
+        sessionId="sess-1"
+        activeTab="team"
+        onTabChange={() => {}}
+        inspect={request(payload)}
+        harvest={request(payload.harvestQueue)}
+        memoryReview={request({ accepted: acceptedMemory, rejected: payload.memoryReview.rejected })}
+        providerHealth={request(extendedProviders)}
+        refresh={request(null)}
+        constraint={request(constraintSnapshot)}
+        onReloadDiagnostics={() => {}}
+        onReindexCode={() => {}}
+        onReadProviderStatus={() => {}}
+      />,
+    )
+
+    expect(html).toContain('团队沉淀')
+    expect(html).toContain('Checkout task fixed validation handling.')
+    expect(html).toContain('产物摘要')
+    expect(html).toContain('94%')
+    expect(html).not.toContain('发布前运行 pnpm build。')
+    expect(html).not.toContain('candidate-1')
+  })
+
+  it('labels repo wiki sections in Chinese', () => {
+    const html = renderToStaticMarkup(<ContextCurrentPanel payload={{
+      ...payload,
+      bundle: {
+        ...payload.bundle!,
+        sections: [{
+          ...payload.bundle!.sections[0],
+          id: 'repo-wiki-section-1',
+          kind: 'repo_wiki',
+          title: 'Repo Wiki',
+          content: 'Session injects context.',
+          sourceProvider: 'RepoWikiProvider',
+        }],
+      },
+    }} loading={false} error={null} />)
+
+    expect(html).toContain('仓库 Wiki')
+    expect(html).toContain('RepoWikiProvider')
+    expect(html).toContain('仓库 Wiki 命中')
+  })
+
+  it('shows repo wiki summary in advanced diagnostics', () => {
+    const html = renderToStaticMarkup(<ContextAdvancedDiagnosticsPanel
+      inspect={{ data: { ...payload, repoWiki: { activeEntries: 2, staleEntries: 1, lastGeneratedAt: 1_700_000_000_000, lastModelId: 'claude-sonnet-4', lastDiagnostic: 'citation stale' }, advancedDiagnostics: payload.advancedDiagnostics }, loading: false, error: null, loadedAt: 1 }}
+      harvest={{ data: null, loading: false, error: null, loadedAt: 1 }}
+      memoryReview={{ data: null, loading: false, error: null, loadedAt: 1 }}
+      providerHealth={{ data: null, loading: false, error: null, loadedAt: 1 }}
+      refresh={{ data: null, loading: false, error: null, loadedAt: 1 }}
+      onReloadDiagnostics={() => {}}
+      onReindexCode={() => {}}
+      onReadProviderStatus={() => {}}
+    />)
+
+    expect(html).toContain('仓库 Wiki')
+    expect(html).toContain('claude-sonnet-4')
+    expect(html).toContain('可用条目')
+    expect(html).toContain('citation stale')
+  })
+
+  it('renders current injected context sections in Chinese with citations and suppressed count', () => {
+    const html = renderToStaticMarkup(<ContextCurrentPanel payload={{ ...payload, droppedSections: [{ section: { ...payload.bundle!.sections[0], id: 'dropped-1', title: 'Dropped', content: 'model_noop rejected candidate' }, reason: 'token budget', tokenEstimate: 25 }] }} loading={false} error={null} />)
+
+    expect(html).toContain('Relevant code')
+    expect(html).toContain('Use the context panel.')
+    expect(html).toContain('本轮注入')
+    expect(html).toContain('未注入')
+    expect(html).toContain('注入原因')
+    expect(html).toContain('相关代码匹配')
+    expect(html).toContain('来源')
+    expect(html).toContain('置信度')
+    expect(html).toContain('新鲜度')
+    expect(html).toContain('引用')
+    expect(html).toContain('已抑制 1')
+    expect(html).toContain('92%')
+    expect(html).toContain('实时')
+    expect(html).toContain('42 令牌')
+    expect(html).not.toContain('tokens')
+    expect(html).toContain('src/app.ts:12')
+    expect(html).not.toContain('model_noop')
+    expect(html).not.toContain('candidate-1')
+  })
+
+  it('renders current injected context markdown as rich markdown', () => {
+    const html = renderToStaticMarkup(<ContextCurrentPanel payload={{
+      ...payload,
+      bundle: {
+        ...payload.bundle!,
+        sections: [{
+          ...payload.bundle!.sections[0],
+          content: '### Runbook\n- Run `pnpm build`\n\n```ts\nconst ok = true\n```',
+        }],
+      },
+    }} loading={false} error={null} />)
+
+    expect(html).toContain('<h3')
+    expect(html).toContain('<ul')
+    expect(html).toContain('markdown-code-block')
+    expect(html).toContain('pnpm build')
+  })
+
+  it('keeps raw provider and planner diagnostics out of the primary status panel', () => {
+    const noisyPayload: ContextInspectPayload = {
+      ...payload,
+      diagnostics: [
+        { id: 'diag-ide', level: 'warning', source: 'IdeSignalProvider', message: 'IDE snapshot is unavailable; IDE provider returned stale degraded context.', createdAt: 1_700_000_000_000 },
+      ],
+      bundle: payload.bundle
+        ? {
+            ...payload.bundle,
+            diagnostics: [
+              { id: 'diag-code', level: 'warning', source: 'ContextProvider:code', message: 'Provider code exceeded context budget; returning degraded context.', createdAt: 1_700_000_000_000 },
+              { id: 'diag-planner', level: 'info', source: 'ContextPlanner', message: 'Plan ctx_plan_test inferred debug intent and selected 0/0 context sections.', createdAt: 1_700_000_000_000 },
+            ],
+          }
+        : null,
+    }
+    const html = renderToStaticMarkup(<ContextInspectPanel payload={noisyPayload} loading={false} error={null} />)
+
+    expect(html).not.toContain('IdeSignalProvider')
+    expect(html).not.toContain('Provider code exceeded context budget')
+    expect(html).not.toContain('ContextPlanner')
+    expect(html).not.toContain('selected 0/0 context sections')
+  })
+
+  it('renders accepted project memory facts with Chinese labels', () => {
+    const html = renderToStaticMarkup(<ContextFactsPanel acceptedMemory={acceptedMemory} projectFacts={payload.acceptedProjectFacts} loading={false} error={null} />)
+
+    expect(html).toContain('项目记忆')
+    expect(html).toContain('Accepted facts are durable only after citation validation.')
+    expect(html).toContain('发布前运行 pnpm build。')
+    expect(html).toContain('置信度')
+    expect(html).toContain('87%')
+    expect(html).toContain('sess-1/run-1')
+    expect(html).toContain('过期')
+  })
+
+  it('renders accepted project memory markdown as rich markdown', () => {
+    const html = renderToStaticMarkup(<ContextFactsPanel acceptedMemory={{
+      ...acceptedMemory,
+      results: [{
+        ...acceptedMemory.results[0],
+        content: '## Durable fact\n- Keep `citations`\n\n```json\n{\"ok\":true}\n```',
+      }],
+    }} projectFacts={[]} loading={false} error={null} />)
+
+    expect(html).toContain('<h2')
+    expect(html).toContain('<ul')
+    expect(html).toContain('markdown-code-block')
+    expect(html).toContain('citations')
+  })
+
+  it('keeps accepted project facts visible when accepted memory loading has a partial error', () => {
+    const html = renderToStaticMarkup(<ContextFactsPanel acceptedMemory={null} projectFacts={payload.acceptedProjectFacts} loading={false} error="memory unavailable" />)
+
+    expect(html).toContain('发布前运行 pnpm build。')
+    expect(html).toContain('部分项目记忆暂不可用')
+    expect(html).toContain('memory unavailable')
+  })
+
+  it('renders status states in Chinese as isolated from chat', () => {
+    const disabledHtml = renderToStaticMarkup(<ContextInspectPanel payload={{ ...payload, status: 'disabled', bundle: null }} loading={false} error={null} />)
+    const unavailableHtml = renderToStaticMarkup(<ContextInspectPanel payload={{ ...payload, status: 'unavailable', bundle: null, diagnostics: [{ id: 'diag-1', level: 'error', source: 'PuddingContextInspect', message: 'store unavailable', createdAt: 1_700_000_000_000 }] }} loading={false} error={null} />)
+
+    expect(disabledHtml).toContain('上下文引擎已关闭')
+    expect(disabledHtml).toContain('聊天继续运行')
+    expect(unavailableHtml).toContain('上下文暂不可用')
+    expect(unavailableHtml).toContain('store unavailable')
+  })
+
+  it('renders harvest queue statuses and skip or rejection reasons in Chinese', () => {
+    const html = renderToStaticMarkup(<HarvestQueuePanel queue={payload.harvestQueue} loading={false} error={null} />)
+
+    expect(html).toContain('已接受')
+    expect(html).toContain('已跳过')
+    expect(html).toContain('已拒绝')
+    expect(html).toContain('失败')
+    expect(html).toContain('no_new_fact')
+    expect(html).toContain('gpt-test')
+    expect(html).toContain('持久事实')
+    expect(html).toContain('未报告')
+    expect(html).toContain('验证')
+    expect(html).toContain('引用/置信度/过期')
+  })
+
+  it('renders accepted durable memory records and rejected validation failures in Chinese', () => {
+    const html = renderToStaticMarkup(<MemoryReviewPanel review={{ accepted: acceptedMemory, rejected: payload.memoryReview.rejected }} loading={false} error={null} />)
+
+    expect(html).toContain('已接受记忆')
+    expect(html).toContain('Accepted facts are durable only after citation validation.')
+    expect(html).toContain('87%')
+    expect(html).toContain('sess-1/run-1')
+    expect(html).toContain('过期')
+    expect(html).toContain('candidate-1')
+    expect(html).toContain('已拒绝')
+    expect(html).toContain('Missing citations')
+    expect(html).toContain('citation required')
+  })
+
+  it('renders provider health enabled stale failed and rate limited states in Chinese', () => {
+    const html = renderToStaticMarkup(<ProviderHealthPanel providers={payload.providerHealth} timings={payload.providerTimings} loading={false} error={null} />)
+
+    expect(html).toContain('已启用')
+    expect(html).toContain('过期')
+    expect(html).toContain('失败')
+    expect(html).toContain('限流')
+    expect(html).toContain('git unavailable')
+  })
+
+  it('renders provider health cached indexing timeout and not indexed states with background progress in Chinese', () => {
+    const html = renderToStaticMarkup(<ProviderHealthPanel providers={extendedProviders} timings={[]} loading={false} error={null} />)
+
+    expect(html).toContain('索引中')
+    expect(html).toContain('已缓存')
+    expect(html).toContain('超时')
+    expect(html).toContain('未索引')
+    expect(html).toContain('12/20')
+    expect(html).toContain('60%')
+    expect(html).toContain('来自快照')
+    expect(html).toContain('reindex-1')
+    expect(html).toContain('运行中')
+  })
+})
+
+function request<T>(data: T) {
+  return { data, loading: false, error: null, loadedAt: 1 }
+}

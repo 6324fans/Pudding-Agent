@@ -18,7 +18,7 @@ const WATCHER_RETRY_INITIAL_DELAY_MS = 1_000
 const WATCHER_RETRY_MAX_DELAY_MS = 30_000
 
 function indexConcurrency(): number {
-  const configured = Number(process.env.PUDDING_CONTEXT_INDEX_CONCURRENCY ?? process.env.JDC_CONTEXT_INDEX_CONCURRENCY)
+  const configured = Number(process.env.PUDDING_CONTEXT_INDEX_CONCURRENCY)
   return Number.isInteger(configured) && configured > 0 ? Math.min(configured, 8) : DEFAULT_INDEX_CONCURRENCY
 }
 
