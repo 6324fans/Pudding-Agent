@@ -54,17 +54,27 @@ jobs:
         shell: bash
         run: |
           if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
-            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
-            echo "No macOS signing certificate configured; building unsigned arm64 package."
-            exit 0
+            echo "::error title=Missing macOS signing secrets::CSC_LINK and CSC_KEY_PASSWORD are required for macOS releases. Unsigned or ad-hoc signed builds cannot keep Automation/System Events permissions stable."
+            exit 1
           fi
 
           echo "$CSC_LINK" | base64 --decode > cert.p12
           security create-keychain -p "actions" build.keychain
+          security list-keychains -d user -s build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "actions" build.keychain
-          security import cert.p12 -k build.keychain -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security import cert.p12 -k build.keychain -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
           security set-key-partition-list -S apple-tool:,apple: -s -k "actions" build.keychain
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -n 1)"
+          if [[ -z "$IDENTITY" ]]; then
+            echo "::error title=Missing Developer ID certificate::The imported certificate must include a Developer ID Application identity for macOS distribution."
+            security find-identity -v -p codesigning build.keychain || true
+            exit 1
+          fi
+
+          echo "CSC_NAME=$IDENTITY" >> "$GITHUB_ENV"
+          echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
+          echo "Using macOS signing identity: $IDENTITY"
           defaults write com.apple.security.revocation OCSPStyle -string None
           defaults write com.apple.security.revocation CRLStyle -string None
           rm cert.p12
