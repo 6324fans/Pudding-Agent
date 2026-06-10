@@ -311,8 +311,25 @@ async function getFrontmostAppState(): Promise<{ appName: string; windowTitle: s
 
 async function runAppleScript(lines: string[]): Promise<string> {
   const args = lines.flatMap(line => ['-e', line])
-  const { stdout } = await execFileAsync('/usr/bin/osascript', args)
-  return String(stdout ?? '').trim()
+  try {
+    const { stdout } = await execFileAsync('/usr/bin/osascript', args)
+    return String(stdout ?? '').trim()
+  } catch (err) {
+    throw new Error(formatAppleScriptError(err))
+  }
+}
+
+function formatAppleScriptError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message.includes('-1743') || /not authorized|not permitted|not allowed/i.test(message)) {
+    return [
+      'Computer Use is not authorized by macOS.',
+      'Enable Pudding-Agent in System Settings > Privacy & Security > Automation > System Events.',
+      'Also enable Pudding-Agent in Accessibility and Screen Recording if the action clicks, types, scrolls, or reads the screen.',
+      `Original error: ${message}`,
+    ].join('\n')
+  }
+  return message
 }
 
 function numberArg(value: unknown, name: string): number {

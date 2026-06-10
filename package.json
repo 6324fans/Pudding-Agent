@@ -20,7 +20,7 @@
     "build:ui": "corepack pnpm --filter @puddingagent/ui build",
     "package": "corepack pnpm build && node scripts/fix-node-pty-permissions.mjs && electron-builder --publish never",
     "test": "corepack pnpm --filter @puddingagent/core test",
-    "postinstall": "node scripts/fix-node-pty-permissions.mjs && node -e \"if(process.platform==='darwin'){const{execSync}=require('child_process');try{execSync('EPATH=node_modules/.pnpm/electron@33.4.11/node_modules/electron/dist/Electron.app; if [ -d \\\"$EPATH\\\" ]; then cp assets/icon.icns \\\"$EPATH/Contents/Resources/electron.icns\\\" && /usr/libexec/PlistBuddy -c \\\"Set :CFBundleDisplayName Pudding-Agent\\\" -c \\\"Set :CFBundleName Pudding-Agent\\\" \\\"$EPATH/Contents/Info.plist\\\"; fi',{shell:'/bin/bash'})}catch(e){}}\""
+    "postinstall": "node scripts/fix-node-pty-permissions.mjs && node scripts/prepare-electron-dev-app.mjs"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",

@@ -36,6 +36,22 @@ async function main() {
   // Wait for Vite to start
   await sleep(5000);
 
+  if (process.platform === "darwin") {
+    console.log("[dev] Preparing Electron.app for macOS automation...");
+    const prepare = spawn("node", ["scripts/prepare-electron-dev-app.mjs"], {
+      stdio: "inherit",
+      cwd: new URL("..", import.meta.url).pathname,
+    });
+    processes.push(prepare);
+
+    await new Promise<void>((resolve, reject) => {
+      prepare.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Electron app preparation exited with code ${code}`));
+      });
+    });
+  }
+
   console.log("[dev] Building electron main process...");
   const build = spawn("node", ["build.mjs"], {
     stdio: "inherit",
