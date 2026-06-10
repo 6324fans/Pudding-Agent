@@ -54,8 +54,10 @@ jobs:
         shell: bash
         run: |
           if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
-            echo "::error title=Missing macOS signing secrets::CSC_LINK and CSC_KEY_PASSWORD are required for macOS releases. Unsigned or ad-hoc signed builds cannot keep Automation/System Events permissions stable."
-            exit 1
+            echo "::warning title=Unsigned macOS package::CSC_LINK and CSC_KEY_PASSWORD are not configured. Building unsigned; Automation/System Events permissions will not persist reliably."
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "PUDDING_ALLOW_UNSIGNED_MAC_PACKAGE=1" >> "$GITHUB_ENV"
+            exit 0
           fi
 
           echo "$CSC_LINK" | base64 --decode > cert.p12

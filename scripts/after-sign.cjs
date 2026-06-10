@@ -16,23 +16,38 @@ function findApp(appOutDir) {
   return appName ? path.join(appOutDir, appName) : null
 }
 
+function handleSigningIssue(message) {
+  if (process.env.PUDDING_STRICT_MAC_SIGNING === '1') throw new Error(message)
+  console.warn(`[after-sign] ${message}`)
+}
+
 exports.default = async function afterSign(context) {
   if (context.electronPlatformName !== 'darwin') return
   if (process.env.PUDDING_ALLOW_UNSIGNED_MAC_PACKAGE === '1') return
 
   const appPath = findApp(context.appOutDir)
-  if (!appPath) throw new Error(`No .app bundle found in ${context.appOutDir}`)
+  if (!appPath) return handleSigningIssue(`No .app bundle found in ${context.appOutDir}`)
 
-  const details = run('/usr/bin/codesign', ['-dv', '--verbose=4', appPath], context.packager.projectDir)
+  let details = ''
+  try {
+    details = run('/usr/bin/codesign', ['-dv', '--verbose=4', appPath], context.packager.projectDir)
+  } catch (err) {
+    return handleSigningIssue(`Pudding-Agent macOS package is unsigned or cannot be inspected by codesign.\n${err.message}`)
+  }
   if (details.includes('Signature=adhoc') || details.includes('TeamIdentifier=not set')) {
-    throw new Error([
+    return handleSigningIssue([
       'Pudding-Agent macOS package is not signed with a stable Apple team identity.',
       details,
     ].join('\n'))
   }
 
-  const entitlements = run('/usr/bin/codesign', ['--display', '--entitlements', ':-', appPath], context.packager.projectDir)
+  let entitlements = ''
+  try {
+    entitlements = run('/usr/bin/codesign', ['--display', '--entitlements', ':-', appPath], context.packager.projectDir)
+  } catch (err) {
+    return handleSigningIssue(`Unable to inspect Pudding-Agent macOS entitlements.\n${err.message}`)
+  }
   if (!entitlements.includes('com.apple.security.automation.apple-events')) {
-    throw new Error('Pudding-Agent macOS signature is missing com.apple.security.automation.apple-events entitlement.')
+    handleSigningIssue('Pudding-Agent macOS signature is missing com.apple.security.automation.apple-events entitlement.')
   }
 }

@@ -18,6 +18,7 @@ function getCodesigningIdentities() {
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return
+  const strictSigning = process.env.PUDDING_STRICT_MAC_SIGNING === '1'
   if (process.env.PUDDING_ALLOW_UNSIGNED_MAC_PACKAGE === '1') {
     console.warn('[after-pack] Building an unsigned macOS package. Computer Use Automation permissions will not persist reliably.')
     return
@@ -28,10 +29,11 @@ exports.default = async function afterPack(context) {
   const identities = getCodesigningIdentities()
   if (identities.length > 0) return
 
-  throw new Error([
+  const message = [
     'Pudding-Agent macOS packages require a stable code signing identity.',
     'Computer Use controls System Events, and macOS TCC revokes Automation permissions for ad-hoc or unsigned app bundles after rebuilds.',
-    'Install an Apple Developer ID Application certificate or provide CSC_LINK/CSC_NAME before running pnpm package.',
-    'For a throwaway unsigned build only, set PUDDING_ALLOW_UNSIGNED_MAC_PACKAGE=1.',
-  ].join('\n'))
+    'Install an Apple Developer ID Application certificate or provide CSC_LINK/CSC_NAME for stable Computer Use permissions.',
+  ].join('\n')
+  if (strictSigning) throw new Error(message)
+  console.warn(`[after-pack] ${message}`)
 }
