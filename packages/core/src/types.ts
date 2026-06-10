@@ -180,6 +180,10 @@ export interface SessionConfig {
   modelConfig: ModelConfig
 }
 
+export interface ComputerUseConfig {
+  enabled?: boolean
+}
+
 export const AppConfigSchema = z.object({
   defaultProvider: z.enum(['anthropic', 'openai', 'custom', 'ollama']).default('anthropic'),
   anthropicApiKey: z.string().optional(),
@@ -188,6 +192,9 @@ export const AppConfigSchema = z.object({
   ollamaEndpoint: z.string().default('http://localhost:11434'),
   defaultModel: z.string().default('claude-sonnet-4-6'),
   theme: z.enum(['dark', 'light']).default('dark'),
+  computerUse: z.object({
+    enabled: z.boolean().optional(),
+  }).optional(),
 })
 
 export type AppConfig = z.infer<typeof AppConfigSchema>

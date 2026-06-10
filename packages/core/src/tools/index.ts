@@ -19,6 +19,7 @@ import { lspTool } from './lsp.js'
 import { createPowerShellTool } from './powershell.js'
 import { findGitBash, findPowerShell } from '../utils/shell-detection.js'
 import { isWindows } from '../utils/platform.js'
+import { createComputerUseTools } from './computer-use.js'
 
 export function registerBuiltinTools(registry: ToolRegistry): void {
   const onWindows = isWindows()
@@ -50,6 +51,9 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
   registry.register(webSearchTool)
   registry.register(weatherTool)
   registry.register(lspTool)
+  for (const tool of createComputerUseTools()) {
+    registry.register(tool)
+  }
 
   // Pudding Context Engine — native code intelligence and durable project memory.
   for (const tool of createContextEngineTools()) {
@@ -60,6 +64,7 @@ export function registerBuiltinTools(registry: ToolRegistry): void {
 }
 
 export { bashTool, fileReadTool, fileWriteTool, fileEditTool, multiEditTool, globTool, grepTool, lsTool, treeTool, notebookEditTool, webFetchTool, webSearchTool, weatherTool, lspTool }
+export { createComputerUseTools, COMPUTER_USE_TOOL_NAMES, isComputerUseEnabled, isComputerUseToolName } from './computer-use.js'
 export { createContextEngineTools } from './context-engine-tools.js'
 export { createContextInspectTool } from './context-inspect.js'
 export { createContextRefreshTool } from './context-refresh.js'

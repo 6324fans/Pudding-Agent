@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { v4 as uuid } from 'uuid'
 import path from 'node:path'
-import type { Message, ModelConfig, SessionConfig, StreamChunk } from './types.js'
+import type { Message, ModelConfig, SessionConfig, StreamChunk, ToolDefinition } from './types.js'
 import type { ModelProvider } from './model-provider.js'
 import { ToolRegistry } from './tool-registry.js'
 import { ToolRunner, type ToolExecutionEvent, type PermissionCallback } from './tool-runner.js'
@@ -55,6 +55,7 @@ import { createBackgroundStatusTool } from './tools/background-status.js'
 import { createBackgroundEventsTool } from './tools/background-events.js'
 import { createTeamListTool } from './tools/team-list.js'
 import { createTeamAddTaskTool } from './tools/team-add-task.js'
+import { isComputerUseEnabled, isComputerUseToolName } from './tools/computer-use.js'
 import { buildContextBundle, type ContextProvider } from './context/orchestrator.js'
 import { mainSessionProfile } from './context/actor-profile.js'
 import { DEFAULT_CONTEXT_ENGINE_CONFIG, resolveContextEngineConfig, type ContextEngineConfigInput } from './context/config.js'
@@ -951,7 +952,7 @@ export class Session {
           }
           const stream = this.provider.stream(
             this.messages,
-            this.toolRegistry.getDefinitions(),
+            this.getAvailableToolDefinitions(),
             cfgWithCache,
             this.abortController!.signal
           )
@@ -1352,13 +1353,13 @@ export class Session {
   }
 
   private async prepareSystemPromptForRunLoop(): Promise<void> {
-    const toolDefs = this.toolRegistry.getDefinitions()
+    const appConfig = loadAppConfig()
+    const toolDefs = this.getAvailableToolDefinitions(appConfig)
     const toolNames = toolDefs.map(d => d.name)
     const mcpServers = this.mcpManager?.getServerStates()
       .filter(s => s.status === 'connected')
       .map(s => ({ name: s.name, toolCount: s.tools.length, tools: s.tools.map(t => t.name), instructions: s.instructions }))
 
-    const appConfig = loadAppConfig()
     this.modelProfile = this.resolveCurrentModelProfile(appConfig)
     this.config.modelConfig.modelProfile = this.modelProfile
     this.parallelExecutor.setMaxReadConcurrency(this.modelProfile.maxParallelToolCalls)
@@ -1410,6 +1411,12 @@ export class Session {
         cacheable: engineSegment.cacheable,
       })
     }
+  }
+
+  private getAvailableToolDefinitions(appConfig: Record<string, any> = loadAppConfig()): ToolDefinition[] {
+    const toolDefs = this.toolRegistry.getDefinitions()
+    if (isComputerUseEnabled(appConfig)) return toolDefs
+    return toolDefs.filter(tool => !isComputerUseToolName(tool.name))
   }
 
   private async createContextRequest(userMessage: string): Promise<ContextRequest> {

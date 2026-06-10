@@ -178,6 +178,7 @@ function ToolsTab() {
   const [proxyEnabled, setProxyEnabled] = useState(false)
   const [proxyUrl, setProxyUrl] = useState('')
   const [proxyUseEnv, setProxyUseEnv] = useState(true)
+  const [computerUseEnabled, setComputerUseEnabled] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -194,6 +195,7 @@ function ToolsTab() {
       setProxyEnabled(Boolean(wp.enabled || ws.proxy))
       setProxyUrl(wp.url || ws.proxy || '')
       setProxyUseEnv(wp.useEnv !== false)
+      setComputerUseEnabled(cfg?.computerUse?.enabled === true)
     }).catch(() => undefined)
   }, [])
 
@@ -212,6 +214,9 @@ function ToolsTab() {
           enabled: proxyEnabled,
           url: proxyUrl.trim() || undefined,
           useEnv: proxyUseEnv,
+        },
+        computerUse: {
+          enabled: computerUseEnabled,
         },
       } as any)
       setSaved(true)
@@ -278,6 +283,31 @@ function ToolsTab() {
             <input type="checkbox" checked={proxyUseEnv} onChange={(e) => setProxyUseEnv(e.target.checked)} />
             未填写地址时读取环境变量
           </label>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-[13px] font-medium text-[var(--text)] mb-3">Computer Use</h3>
+        <div className="space-y-3 rounded-[6px] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+          <label className="flex items-start gap-2 text-[12px] text-[var(--muted)]">
+            <input
+              type="checkbox"
+              checked={computerUseEnabled}
+              onChange={(e) => setComputerUseEnabled(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-[13px] text-[var(--text)]">启用 Computer Use</span>
+              <span className="block mt-1">允许模型使用截图、点击、拖拽、输入、按键、滚动和打开应用等本机控制工具。</span>
+            </span>
+          </label>
+          <div className="grid grid-cols-2 gap-2 text-[11px] text-[var(--muted)]">
+            {['computer_get_app_state', 'computer_list_apps', 'computer_screenshot', 'computer_click', 'computer_drag', 'computer_type_text', 'computer_press_key', 'computer_scroll', 'computer_open_app'].map((tool) => (
+              <span key={tool} className="font-mono rounded-[4px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1">
+                {tool}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createBrowserOpenTool } from '../tools/browser-open.js'
+import { COMPUTER_USE_TOOL_NAMES, createComputerUseTools, isComputerUseToolName } from '../tools/computer-use.js'
 import { createSkillListTool } from '../tools/skill-list.js'
 
 describe('host capability tools', () => {
@@ -14,6 +15,15 @@ describe('host capability tools', () => {
     const valid = await tool.execute({ url: 'https://example.com/path' }, { cwd: '/' })
     expect(valid.isError).toBeUndefined()
     expect(opened).toEqual(['https://example.com/path'])
+  })
+
+  it('computer use exposes the expected host control tools', () => {
+    const tools = createComputerUseTools()
+    const names = tools.map(tool => tool.definition.name)
+
+    expect(names).toEqual([...COMPUTER_USE_TOOL_NAMES])
+    expect(names.every(isComputerUseToolName)).toBe(true)
+    expect(tools.every(tool => tool.definition.inputSchema.type === 'object')).toBe(true)
   })
 
   it('skill_list reports empty skill state clearly', async () => {
