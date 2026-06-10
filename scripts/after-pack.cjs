@@ -1,32 +1,37 @@
 const { execFileSync } = require('node:child_process')
-const { readdirSync } = require('node:fs')
-const path = require('node:path')
 
 function run(command, args, cwd) {
   return execFileSync(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
-function findApp(appOutDir) {
-  const appName = readdirSync(appOutDir).find(name => name.endsWith('.app'))
-  return appName ? path.join(appOutDir, appName) : null
-}
-
-function hasValidSignature(appPath) {
+function getCodesigningIdentities() {
   try {
-    run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], process.cwd())
-    return true
+    const output = run('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], process.cwd()).toString()
+    return output
+      .split(/\r?\n/)
+      .map(line => line.match(/^\s*\d+\)\s+[A-F0-9]+\s+"(.+)"$/)?.[1])
+      .filter(Boolean)
   } catch {
-    return false
+    return []
   }
 }
 
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return
+  if (process.env.PUDDING_ALLOW_UNSIGNED_MAC_PACKAGE === '1') {
+    console.warn('[after-pack] Building an unsigned macOS package. Computer Use Automation permissions will not persist reliably.')
+    return
+  }
 
-  const appPath = findApp(context.appOutDir)
-  if (!appPath || hasValidSignature(appPath)) return
+  if (process.env.CSC_LINK || process.env.CSC_NAME) return
 
-  const entitlements = path.join(context.packager.projectDir, 'assets', 'entitlements.mac.plist')
-  run('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', '--entitlements', entitlements, appPath], context.packager.projectDir)
-  console.log(`[after-pack] Applied ad-hoc macOS signature to ${appPath}`)
+  const identities = getCodesigningIdentities()
+  if (identities.length > 0) return
+
+  throw new Error([
+    'Pudding-Agent macOS packages require a stable code signing identity.',
+    'Computer Use controls System Events, and macOS TCC revokes Automation permissions for ad-hoc or unsigned app bundles after rebuilds.',
+    'Install an Apple Developer ID Application certificate or provide CSC_LINK/CSC_NAME before running pnpm package.',
+    'For a throwaway unsigned build only, set PUDDING_ALLOW_UNSIGNED_MAC_PACKAGE=1.',
+  ].join('\n'))
 }

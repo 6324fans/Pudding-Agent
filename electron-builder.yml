@@ -4,6 +4,7 @@ artifactName: "Pudding-Agent-${version}-${arch}-${os}.${ext}"
 electronVersion: "33.4.11"
 npmRebuild: true
 afterPack: scripts/after-pack.cjs
+afterSign: scripts/after-sign.cjs
 directories:
   output: out
   app: packages/electron
