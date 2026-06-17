@@ -315,6 +315,7 @@ function getToolUsageSection(toolNames: string[]): string {
   const hasBash = toolNames.includes('bash')
   const hasAgent = toolNames.includes('Agent')
   const hasSkill = toolNames.includes('Skill')
+  const hasComputerUse = toolNames.some(name => name.startsWith('computer_'))
 
   const items: string[] = [
     'Do NOT use bash to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work.',
@@ -327,6 +328,12 @@ function getToolUsageSection(toolNames: string[]): string {
   if (hasGlob) items.push('To search for files by name pattern, use glob instead of find. glob requires a non-empty pattern, such as "**/*.ts".')
   if (hasGrep) items.push('To search file contents, use grep instead of shell grep or rg. grep requires a non-empty pattern; if you only need to list files, use glob or ls first.')
   if (hasBash) items.push('Reserve bash exclusively for system commands and terminal operations that require shell execution.')
+  if (hasComputerUse) {
+    items.push(
+      'For Computer Use tasks, call the relevant computer_* tools directly instead of repeating status text like "I will open/search/click...". If a computer_* tool fails, do not restate the same plan; use a different available computer_* tool, inspect the screenshot/tool result, or explain the concrete blocker.',
+      'When computer_get_app_state or computer_screenshot returns "screenshot_image: attached", visual context is available to you even if OCR or the accessibility tree failed. Do not claim you are blind or ask the user to manually finish solely because OCR/accessibility failed; use the attached screenshot for visible text/layout and fall back to x/y coordinate clicks when element_index is unavailable.',
+    )
+  }
 
   if (hasAgent) {
     items.push(

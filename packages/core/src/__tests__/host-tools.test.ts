@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createBrowserOpenTool } from '../tools/browser-open.js'
-import { COMPUTER_USE_TOOL_NAMES, createComputerUseTools, isComputerUseToolName } from '../tools/computer-use.js'
+import { COMPUTER_USE_TOOL_NAMES, computerUseTestInternals, createComputerUseTools, isComputerUseToolName } from '../tools/computer-use.js'
 import { createSkillListTool } from '../tools/skill-list.js'
 
 describe('host capability tools', () => {
@@ -37,6 +37,14 @@ describe('host capability tools', () => {
     expect(clickSchema.properties.element_index).toBeTruthy()
     expect(clickSchema.required).toBeUndefined()
     expect(scrollSchema.properties.element_index).toBeTruthy()
+  })
+
+  it('computer use accessibility script scopes UI element traversal to System Events', () => {
+    const script = computerUseTestInternals.buildAccessibilityTreeScript(3)
+
+    expect(script).toContain('tell application "System Events" to set childElements to UI elements of theElement')
+    expect(script).not.toContain('set childElements to UI elements of theElement')
+    expect(script.some(line => line.includes('help of theElement'))).toBe(false)
   })
 
   it('skill_list reports empty skill state clearly', async () => {

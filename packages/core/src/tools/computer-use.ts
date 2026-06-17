@@ -114,37 +114,61 @@ const computerGetAppStateTool: ToolHandler = {
     const gated = gateComputerUse()
     if (gated) return gated
     const app = String(input.app ?? '').trim()
-    if (app) await activateApp(app)
+    const activationError = app
+      ? await activateApp(app).then(
+        () => null,
+        error => errorMessage(error),
+      )
+      : null
     const maxElements = boundedInteger(optionalNumberArg(input.max_elements), DEFAULT_ACCESSIBILITY_ELEMENT_LIMIT, 1, MAX_ACCESSIBILITY_ELEMENT_LIMIT)
-    const [state, screenshot, accessibility] = await Promise.all([
-      getFrontmostAppState(),
-      captureScreenshot(context.cwd),
+    const [stateResult, screenshotResult, accessibility] = await Promise.all([
+      getFrontmostAppState().then(
+        state => ({ state }),
+        error => ({ error: errorMessage(error) }),
+      ),
+      captureScreenshot(context.cwd).then(
+        screenshot => ({ screenshot }),
+        error => ({ error: errorMessage(error) }),
+      ),
       getAccessibilityElements(maxElements).then(
         elements => ({ elements }),
-        error => ({ error: error instanceof Error ? error.message : String(error) }),
+        error => ({ error: errorMessage(error) }),
       ),
     ])
+    const state = 'state' in stateResult ? stateResult.state : { appName: '', windowTitle: '' }
+    const stateError = 'error' in stateResult ? stateResult.error : undefined
+    const screenshot = 'screenshot' in screenshotResult ? screenshotResult.screenshot : null
+    const screenshotError = 'error' in screenshotResult ? screenshotResult.error : undefined
     const elements = 'elements' in accessibility ? accessibility.elements : []
-    const screenshotImage = await screenshotToImageContent(screenshot.filePath)
+    const accessibilityError = 'error' in accessibility ? accessibility.error : undefined
+    const screenshotImage: { image?: ImageContent; error?: string } = screenshot ? await screenshotToImageContent(screenshot.filePath) : { error: screenshotError ?? 'screenshot capture failed' }
     latestAccessibilitySnapshot = {
       appName: state.appName,
       windowTitle: state.windowTitle,
       capturedAt: Date.now(),
       elements,
     }
+    const hasUsableResult = Boolean(screenshotImage.image || elements.length > 0)
     return {
       content: [
         `front_app: ${state.appName || '(unknown)'}`,
         `window_title: ${state.windowTitle || '(unknown)'}`,
-        `screenshot: ${screenshot.filePath}`,
-        `size_bytes: ${screenshot.size}`,
+        ...(activationError ? [`app_activation_error: ${activationError}`] : []),
+        ...(stateError ? [`front_app_error: ${stateError}`] : []),
+        ...(screenshot ? [`screenshot: ${screenshot.filePath}`, `size_bytes: ${screenshot.size}`] : [`screenshot_error: ${screenshotError ?? 'unknown screenshot error'}`]),
         `coordinate_system: absolute macOS screen pixels`,
         `elements_captured: ${elements.length}`,
         screenshotImage.image ? 'screenshot_image: attached' : `screenshot_image_error: ${screenshotImage.error}`,
-        ...('error' in accessibility ? [`accessibility_tree_error: ${accessibility.error}`] : []),
+        ...(screenshotImage.image ? [
+          'visual_context: the screenshot is attached as a model-visible image; inspect it directly for visible text, layout, and target coordinates.',
+          'fallback_targeting: if accessibility_tree_error is present, continue using screenshot-based x/y coordinates with computer_click instead of stopping.',
+          'ocr_guidance: do not require a separate OCR tool for visible screenshot text in this result.',
+        ] : []),
+        ...(accessibilityError ? [`accessibility_tree_error: ${accessibilityError}`] : []),
         ...formatAccessibilityTree(elements),
       ].join('\n'),
       images: screenshotImage.image ? [screenshotImage.image] : undefined,
+      isError: hasUsableResult ? undefined : true,
     }
   },
 }
@@ -194,6 +218,10 @@ const computerScreenshotTool: ToolHandler = {
         `screenshot: ${screenshot.filePath}`,
         `size_bytes: ${screenshot.size}`,
         screenshotImage.image ? 'screenshot_image: attached' : `screenshot_image_error: ${screenshotImage.error}`,
+        ...(screenshotImage.image ? [
+          'visual_context: the screenshot is attached as a model-visible image; inspect it directly for visible text, layout, and target coordinates.',
+          'ocr_guidance: do not require a separate OCR tool for visible screenshot text in this result.',
+        ] : []),
       ].join('\n'),
       images: screenshotImage.image ? [screenshotImage.image] : undefined,
     }
@@ -473,9 +501,7 @@ function buildAccessibilityTreeScript(maxElements: number): string[] {
     'try',
     'set descriptionText to my cleanText(description of theElement)',
     'end try',
-    'try',
-    'set helpText to my cleanText(help of theElement)',
-    'end try',
+    '-- Some applications expose AXHelp, but AppleScript does not provide a portable "help of" property here.',
     'try',
     'set enabledText to enabled of theElement as text',
     'end try',
@@ -497,7 +523,7 @@ function buildAccessibilityTreeScript(maxElements: number): string[] {
     'set collectedCount to collectedCount + 1',
     'end if',
     'try',
-    'set childElements to UI elements of theElement',
+    'tell application "System Events" to set childElements to UI elements of theElement',
     'repeat with childElement in childElements',
     'if collectedCount >= collectedLimit then exit repeat',
     'my collectElement(childElement, depth + 1)',
@@ -642,6 +668,10 @@ function formatAppleScriptError(err: unknown): string {
   return message
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function numberArg(value: unknown, name: string): number {
   const parsed = optionalNumberArg(value)
   if (parsed === undefined) throw new Error(`${name} must be a number`)
@@ -753,4 +783,8 @@ const KEY_CODES: Record<string, number> = {
   down: 125,
   arrowup: 126,
   up: 126,
+}
+
+export const computerUseTestInternals = {
+  buildAccessibilityTreeScript,
 }

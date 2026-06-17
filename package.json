@@ -19,6 +19,7 @@
     "build:electron": "corepack pnpm --filter @puddingagent/core build && corepack pnpm build:ui && corepack pnpm --filter puddingagent build",
     "build:ui": "corepack pnpm --filter @puddingagent/ui build",
     "package": "corepack pnpm build && node scripts/fix-node-pty-permissions.mjs && electron-builder --publish never",
+    "mac:install-local": "node scripts/install-mac-local.mjs",
     "mac:sign-local": "node scripts/sign-mac-local.mjs",
     "test": "corepack pnpm --filter @puddingagent/core test",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs && node scripts/prepare-electron-dev-app.mjs"

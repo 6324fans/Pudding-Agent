@@ -114,6 +114,53 @@ describe('Session Pudding Context Engine runtime integration', () => {
     expect(defs).toContain('PuddingMemoryWrite')
   })
 
+  it('drops low-value narration from persisted assistant tool-use turns', async () => {
+    const session = await makeSession({
+      provider: providerFromChunks([
+        { type: 'text_delta', text: '我会打开企业微信，搜索联系人“金佳琦”，然后发送“你好”。' },
+        ...assistantToolUseChunks('toolu_noop', 'noop', {}),
+        { type: 'text_delta', text: '完成。' },
+        { type: 'message_end', usage: { inputTokens: 8, outputTokens: 2 } },
+      ]),
+      contextConfig: { enabled: false } as any,
+    })
+    registerNoopTool(session)
+    ;(session as any).permissionChecker.allowForSession('noop')
+    const events = makeEvents()
+
+    await session.sendMessage('去企业微信中找金佳琦发送你好', events)
+
+    const assistantMessages: Message[] = (events.onMessageComplete as any).mock.calls
+      .map((call: [Message]) => call[0])
+      .filter((message: Message) => message.role === 'assistant')
+    expect(assistantMessages).toHaveLength(2)
+    expect(assistantMessages[0].content.some(block => block.type === 'tool_use')).toBe(true)
+    expect(textFromMessages([assistantMessages[0]])).toBe('')
+    expect(textFromMessages([assistantMessages[1]])).toContain('完成。')
+  })
+
+  it('keeps useful observations while removing status-only tool narration', async () => {
+    const session = await makeSession({
+      provider: providerFromChunks([
+        { type: 'text_delta', text: '我看到企业微信已经打开，搜索框在左上角。\n我会点击搜索框。' },
+        ...assistantToolUseChunks('toolu_noop', 'noop', {}),
+        { type: 'text_delta', text: '完成。' },
+        { type: 'message_end', usage: { inputTokens: 8, outputTokens: 2 } },
+      ]),
+      contextConfig: { enabled: false } as any,
+    })
+    registerNoopTool(session)
+    ;(session as any).permissionChecker.allowForSession('noop')
+    const events = makeEvents()
+
+    await session.sendMessage('去企业微信中找金佳琦发送你好', events)
+
+    const assistantMessages: Message[] = (events.onMessageComplete as any).mock.calls
+      .map((call: [Message]) => call[0])
+      .filter((message: Message) => message.role === 'assistant')
+    expect(textFromMessages([assistantMessages[0]]).trim()).toBe('我看到企业微信已经打开，搜索框在左上角。')
+  })
+
   it('includes repo_wiki in the default context provider list before code', async () => {
     const dir = makeTempDir()
     const history = new ConversationHistory(path.join(dir, 'history.db'))
@@ -1325,6 +1372,17 @@ function assistantToolUseChunks(id: string, name: string, input: Record<string, 
     { type: 'tool_use_end' },
     { type: 'message_end', usage: { inputTokens: 8, outputTokens: 4 } },
   ]
+}
+
+function registerNoopTool(session: Session): void {
+  session.registerTool({
+    definition: {
+      name: 'noop',
+      description: 'No-op test tool',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    execute: async () => ({ content: 'ok' }),
+  })
 }
 
 function seedVerificationProject(cwd: string): void {

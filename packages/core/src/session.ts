@@ -1071,7 +1071,7 @@ export class Session {
       // Reorder content blocks: thinking → merged text → tool_uses
       // OpenAI Responses API often interleaves text/function_call within one response,
       // which renders as text being split by tool cards. Group them into a clean structure.
-      const reorderedContent = reorderAssistantContent(assistantContent)
+      const reorderedContent = prepareAssistantContentForPersistence(assistantContent, hasToolUse)
       if (!hasToolUse) {
         await this.applyTurnEndGateDisclosure(reorderedContent, runLoopUserMessage, events)
       }
@@ -1945,4 +1945,58 @@ function reorderAssistantContent(content: any[]): any[] {
   if (text) reordered.push({ type: 'text', text })
   reordered.push(...toolUseBlocks, ...otherBlocks)
   return reordered
+}
+
+function prepareAssistantContentForPersistence(content: any[], hasToolUse: boolean): any[] {
+  return reorderAssistantContent(content).flatMap(block => {
+    if (block.type !== 'text') return [block]
+    const deduped = dedupeRepeatedTextLines(block.text || '')
+    const text = hasToolUse ? removeLowValueToolUseNarration(deduped) : deduped
+    return text.trim().length > 0 ? [{ ...block, text }] : []
+  })
+}
+
+function dedupeRepeatedTextLines(text: string): string {
+  const seen = new Set<string>()
+  const lines = text.split(/\r?\n/)
+  const kept: string[] = []
+
+  for (const line of lines) {
+    const normalized = normalizeRepeatedLine(line)
+    if (normalized && seen.has(normalized)) continue
+    if (normalized) seen.add(normalized)
+    kept.push(line)
+  }
+
+  return collapseBlankLines(kept.join('\n'))
+}
+
+function removeLowValueToolUseNarration(text: string): string {
+  const lines = text.split(/\r?\n/)
+  return collapseBlankLines(lines.filter(line => !isLowValueToolUseNarration(line)).join('\n'))
+}
+
+function isLowValueToolUseNarration(line: string): boolean {
+  const text = line.trim()
+  if (!text) return false
+  if (text.length > 260) return false
+  if (/(?:已经|成功|失败|错误|报错|无法|不能|看到|发现|完成|blocked|failed|error|unable|cannot|can't|found|saw|observed|completed|done)/i.test(text)) {
+    return false
+  }
+
+  return (
+    /^(我(?:会|将|先|来|现在|接下来|准备|打算|需要先)|先|接下来|现在)(?:去|把|在|用|通过|打开|搜索|点击|定位|查看|检查|读取|获取|运行|执行|尝试|使用|切换|输入|发送|调用|继续)/.test(text) ||
+    /^(?:i(?:'|’)ll|i will|i am going to|i'm going to|let me|first,?\s*i(?:'|’)ll|next,?\s*i(?:'|’)ll)\b/i.test(text)
+  )
+}
+
+function normalizeRepeatedLine(line: string): string {
+  return line
+    .toLowerCase()
+    .replace(/[`"'“”‘’「」『』《》()\[\]{}.,，。.!！?？:：;；\s]/g, '')
+    .trim()
+}
+
+function collapseBlankLines(text: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').trim()
 }
