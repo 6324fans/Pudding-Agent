@@ -302,6 +302,7 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
 
     // Execute tools and collect results
     const toolResults: ContentBlock[] = []
+    const toolResultImages: ContentBlock[] = []
     const allowedToolNames = new Set(toolDefs.map(t => t.name))
     for (const tu of toolUses) {
       let parsedInput: Record<string, unknown> = {}
@@ -384,8 +385,9 @@ export async function runSubSession(opts: SubSessionOptions): Promise<SubSession
       })
 
       toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result.content, is_error: result.isError })
+      toolResultImages.push(...(result.images ?? []))
     }
-    messages.push({ id: uuid(), role: 'user', content: toolResults, timestamp: Date.now() })
+    messages.push({ id: uuid(), role: 'user', content: [...toolResults, ...toolResultImages], timestamp: Date.now() })
   }
 
   // Max turns reached — return last assistant text

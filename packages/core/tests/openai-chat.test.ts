@@ -51,7 +51,28 @@ describe('OpenAIChatProvider', () => {
     const provider = new OpenAIChatProvider('test-key')
     const formatted = (provider as any).formatMessages([
       { id: '1', role: 'assistant', content: [{ type: 'tool_use', id: 'tc1', name: 'bash', input: { command: 'ls', flags: ['-la'] } }], timestamp: 0 },
+      { id: '2', role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'ok' }], timestamp: 0 },
     ])
     expect(formatted[0].tool_calls[0].function.arguments).toBe('{"command":"ls","flags":["-la"]}')
+  })
+
+  it('keeps images attached to tool result turns', () => {
+    const provider = new OpenAIChatProvider('test-key')
+    const formatted = (provider as any).formatMessages([
+      { id: '1', role: 'assistant', content: [{ type: 'tool_use', id: 'tc1', name: 'computer_get_app_state', input: {} }], timestamp: 0 },
+      {
+        id: '2',
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'tc1', content: 'screenshot_image: attached' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc' } },
+        ],
+        timestamp: 0,
+      },
+    ])
+
+    expect(formatted[1]).toEqual({ role: 'tool', tool_call_id: 'tc1', content: 'screenshot_image: attached' })
+    expect(formatted[2].role).toBe('user')
+    expect(formatted[2].content[0]).toEqual({ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } })
   })
 })

@@ -276,15 +276,14 @@ export class OpenAIChatProvider implements ModelProvider {
             })
           }
         }
-        // If there are also text blocks alongside tool_result, emit them as a separate user message
-        if (textBlocks.length > 0) {
-          const text = textBlocks
-            .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
-            .map(b => b.text)
-            .join('\n')
-          if (text) {
-            formatted.push({ role: 'user', content: text })
-          }
+        const userParts = formatUserTextAndImages(msg.content)
+        if (userParts.length > 0) {
+          formatted.push({
+            role: 'user',
+            content: userParts.some(part => part.type === 'image_url')
+              ? userParts
+              : userParts.map(part => part.text).join('\n'),
+          } as any)
         }
       } else if (msg.role === 'assistant') {
         const assistantMsg: OpenAI.ChatCompletionAssistantMessageParam = {
@@ -332,9 +331,9 @@ export class OpenAIChatProvider implements ModelProvider {
     const merged: OpenAI.ChatCompletionMessageParam[] = []
     for (const msg of formatted) {
       const last = merged[merged.length - 1]
-      if (last && last.role === 'user' && msg.role === 'user') {
-        const lastText = typeof last.content === 'string' ? last.content : ''
-        const msgText = typeof msg.content === 'string' ? msg.content : ''
+      if (last && last.role === 'user' && msg.role === 'user' && typeof last.content === 'string' && typeof msg.content === 'string') {
+        const lastText = last.content
+        const msgText = msg.content
         last.content = lastText + '\n' + msgText
       } else {
         merged.push(msg)
@@ -377,4 +376,13 @@ export class OpenAIChatProvider implements ModelProvider {
 
     return result
   }
+}
+
+function formatUserTextAndImages(content: ContentBlock[]): any[] {
+  const parts: any[] = []
+  for (const block of content) {
+    if (block.type === 'text') parts.push({ type: 'text', text: block.text })
+    if (block.type === 'image') parts.push({ type: 'image_url', image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` } })
+  }
+  return parts
 }

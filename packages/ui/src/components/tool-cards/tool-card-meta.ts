@@ -78,10 +78,6 @@ const TASK_TOOLS = new Set([
   'team_report',
   'todo_write',
 ])
-const CONTEXT_TOOLS = new Set([
-  'gitnexus',
-])
-
 export function deriveToolStatus(
   event?: ToolEventLike,
   result?: { is_error?: boolean },
@@ -104,7 +100,6 @@ export function getToolFamily(toolName: string): ToolFamily {
   if (SEARCH_TOOLS.has(toolName)) return 'search'
   if (EXTERNAL_TOOLS.has(toolName)) return 'external'
   if (TASK_TOOLS.has(toolName)) return 'task'
-  if (CONTEXT_TOOLS.has(toolName) || toolName.startsWith('gitnexus_')) return 'context'
   return 'generic'
 }
 

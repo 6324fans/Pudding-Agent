@@ -330,6 +330,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
             })
           }
         }
+        if (imageBlocks.length > 0) {
+          const parts = formatUserTextAndImages(msg.content)
+          if (parts.length > 0) {
+            input.push({ role: 'user', content: parts as any })
+          }
+          continue
+        }
       }
 
       // Assistant messages: emit text + function_call items
@@ -401,4 +408,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
       return true
     })
   }
+}
+
+function formatUserTextAndImages(content: ContentBlock[]): any[] {
+  const parts: any[] = []
+  for (const block of content) {
+    if (block.type === 'text') parts.push({ type: 'input_text', text: block.text })
+    if (block.type === 'image') parts.push({ type: 'input_image', image_url: `data:${block.source.media_type};base64,${block.source.data}` })
+  }
+  return parts
 }

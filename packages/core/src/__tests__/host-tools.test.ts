@@ -26,6 +26,19 @@ describe('host capability tools', () => {
     expect(tools.every(tool => tool.definition.inputSchema.type === 'object')).toBe(true)
   })
 
+  it('computer use exposes indexed UI targeting in tool schemas', () => {
+    const tools = Object.fromEntries(createComputerUseTools().map(tool => [tool.definition.name, tool]))
+    const getStateSchema = tools.computer_get_app_state.definition.inputSchema as any
+    const clickSchema = tools.computer_click.definition.inputSchema as any
+    const scrollSchema = tools.computer_scroll.definition.inputSchema as any
+
+    expect(getStateSchema.properties.app).toBeTruthy()
+    expect(getStateSchema.properties.max_elements).toBeTruthy()
+    expect(clickSchema.properties.element_index).toBeTruthy()
+    expect(clickSchema.required).toBeUndefined()
+    expect(scrollSchema.properties.element_index).toBeTruthy()
+  })
+
   it('skill_list reports empty skill state clearly', async () => {
     const loader = { getInvocable: () => [] } as any
     const tool = createSkillListTool(loader)

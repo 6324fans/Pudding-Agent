@@ -26,11 +26,10 @@ describe('tool-card-meta', () => {
     expect(getToolCardKind('mcp__filesystem__read_file')).toBe('mcp')
   })
 
-  it('routes project context tools without changing GitNexus cards', () => {
+  it('routes project context tools as Pudding cards', () => {
     expect(getToolFamily('PuddingContext')).toBe('pudding')
     expect(getToolCardKind('PuddingContext')).toBe('pudding')
     expect(getToolCardKind('PuddingMemorySearch')).toBe('pudding')
-    expect(getToolFamily('gitnexus_query')).toBe('context')
     expect(formatToolLabel('team_add_task')).toBe('TEAM ADD TASK')
   })
 

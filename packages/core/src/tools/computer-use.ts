@@ -1,12 +1,16 @@
 import { execFile } from 'node:child_process'
-import { mkdir, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type { ToolContext, ToolHandler, ToolResult } from '../tool-registry.js'
 import { loadAppConfig } from '../config.js'
+import type { ImageContent } from '../types.js'
+import { compressImageForAPI } from '../utils/image-resizer.js'
 
 const execFileAsync = promisify(execFile)
+const DEFAULT_ACCESSIBILITY_ELEMENT_LIMIT = 80
+const MAX_ACCESSIBILITY_ELEMENT_LIMIT = 200
 
 export const COMPUTER_USE_TOOL_NAMES = [
   'computer_get_app_state',
@@ -21,6 +25,38 @@ export const COMPUTER_USE_TOOL_NAMES = [
 ] as const
 
 type ComputerUseToolName = typeof COMPUTER_USE_TOOL_NAMES[number]
+
+interface AccessibilityElement {
+  index: number
+  depth: number
+  role: string
+  x: number
+  y: number
+  width: number
+  height: number
+  enabled: string
+  focused: string
+  name: string
+  value: string
+  description: string
+  help: string
+}
+
+interface AccessibilitySnapshot {
+  appName: string
+  windowTitle: string
+  capturedAt: number
+  elements: AccessibilityElement[]
+}
+
+interface ClickTarget {
+  x: number
+  y: number
+  source: string
+  element?: AccessibilityElement
+}
+
+let latestAccessibilitySnapshot: AccessibilitySnapshot | null = null
 
 export function isComputerUseToolName(name: string): name is ComputerUseToolName {
   return (COMPUTER_USE_TOOL_NAMES as readonly string[]).includes(name)
@@ -64,27 +100,51 @@ const computerGetAppStateTool: ToolHandler = {
   definition: {
     name: 'computer_get_app_state',
     description:
-      'Get the current macOS foreground application and window summary, then capture a screenshot to a PNG file. ' +
-      'Use this before interacting with the desktop. Requires Computer Use to be enabled in Settings > Tools.',
+      'Get the current macOS foreground application and window summary, capture a screenshot to a PNG file, and return an indexed accessibility tree. ' +
+      'Call this before interacting with the desktop. Use returned element_index values with computer_click when possible.',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        app: { type: 'string', description: 'Optional application name to activate before capturing state.' },
+        max_elements: { type: 'number', description: `Maximum accessibility elements to return. Defaults to ${DEFAULT_ACCESSIBILITY_ELEMENT_LIMIT}.` },
+      },
     },
   },
-  async execute(_input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
-    const [state, screenshot] = await Promise.all([
+    const app = String(input.app ?? '').trim()
+    if (app) await activateApp(app)
+    const maxElements = boundedInteger(optionalNumberArg(input.max_elements), DEFAULT_ACCESSIBILITY_ELEMENT_LIMIT, 1, MAX_ACCESSIBILITY_ELEMENT_LIMIT)
+    const [state, screenshot, accessibility] = await Promise.all([
       getFrontmostAppState(),
       captureScreenshot(context.cwd),
+      getAccessibilityElements(maxElements).then(
+        elements => ({ elements }),
+        error => ({ error: error instanceof Error ? error.message : String(error) }),
+      ),
     ])
+    const elements = 'elements' in accessibility ? accessibility.elements : []
+    const screenshotImage = await screenshotToImageContent(screenshot.filePath)
+    latestAccessibilitySnapshot = {
+      appName: state.appName,
+      windowTitle: state.windowTitle,
+      capturedAt: Date.now(),
+      elements,
+    }
     return {
       content: [
         `front_app: ${state.appName || '(unknown)'}`,
         `window_title: ${state.windowTitle || '(unknown)'}`,
         `screenshot: ${screenshot.filePath}`,
         `size_bytes: ${screenshot.size}`,
+        `coordinate_system: absolute macOS screen pixels`,
+        `elements_captured: ${elements.length}`,
+        screenshotImage.image ? 'screenshot_image: attached' : `screenshot_image_error: ${screenshotImage.error}`,
+        ...('error' in accessibility ? [`accessibility_tree_error: ${accessibility.error}`] : []),
+        ...formatAccessibilityTree(elements),
       ].join('\n'),
+      images: screenshotImage.image ? [screenshotImage.image] : undefined,
     }
   },
 }
@@ -128,7 +188,15 @@ const computerScreenshotTool: ToolHandler = {
     const gated = gateComputerUse()
     if (gated) return gated
     const screenshot = await captureScreenshot(context.cwd)
-    return { content: `screenshot: ${screenshot.filePath}\nsize_bytes: ${screenshot.size}` }
+    const screenshotImage = await screenshotToImageContent(screenshot.filePath)
+    return {
+      content: [
+        `screenshot: ${screenshot.filePath}`,
+        `size_bytes: ${screenshot.size}`,
+        screenshotImage.image ? 'screenshot_image: attached' : `screenshot_image_error: ${screenshotImage.error}`,
+      ].join('\n'),
+      images: screenshotImage.image ? [screenshotImage.image] : undefined,
+    }
   },
 }
 
@@ -136,28 +204,29 @@ const computerClickTool: ToolHandler = {
   definition: {
     name: 'computer_click',
     description:
-      'Click a screen coordinate on macOS using System Events. Coordinates are absolute screen pixels. ' +
-      'Call computer_get_app_state first when you need to inspect the current screen.',
+      'Click a macOS accessibility element by element_index from computer_get_app_state, or click absolute screen coordinates. ' +
+      'Prefer element_index because it is more reliable than estimating coordinates from a screenshot path.',
     inputSchema: {
       type: 'object',
       properties: {
+        element_index: { type: ['string', 'number'], description: 'Element index returned by computer_get_app_state, for example "12".' },
         x: { type: 'number', description: 'Absolute screen X coordinate.' },
         y: { type: 'number', description: 'Absolute screen Y coordinate.' },
         click_count: { type: 'number', description: 'Number of clicks. Defaults to 1.' },
       },
-      required: ['x', 'y'],
     },
   },
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
-    const x = numberArg(input.x, 'x')
-    const y = numberArg(input.y, 'y')
+    const target = resolveClickTarget(input)
+    if ('content' in target) return target
+    const { x, y } = target
     const count = Math.max(1, Math.min(3, Math.floor(optionalNumberArg(input.click_count) ?? 1)))
     for (let i = 0; i < count; i++) {
       await runAppleScript([`tell application "System Events" to click at {${x}, ${y}}`])
     }
-    return { content: `Clicked at (${x}, ${y}) ${count} time${count === 1 ? '' : 's'}.` }
+    return { content: `Clicked ${target.source} at (${x}, ${y}) ${count} time${count === 1 ? '' : 's'}.` }
   },
 }
 
@@ -239,12 +308,13 @@ const computerScrollTool: ToolHandler = {
   definition: {
     name: 'computer_scroll',
     description:
-      'Scroll the focused macOS window by sending page/arrow key events. Direction can be up, down, left, or right.',
+      'Scroll the focused macOS window by sending page/arrow key events. Optionally focus an element_index from computer_get_app_state first.',
     inputSchema: {
       type: 'object',
       properties: {
         direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
         amount: { type: 'number', description: 'Number of key events to send. Defaults to 3.' },
+        element_index: { type: ['string', 'number'], description: 'Optional element index to click/focus before scrolling.' },
       },
       required: ['direction'],
     },
@@ -256,8 +326,14 @@ const computerScrollTool: ToolHandler = {
     const keyCode = ({ up: 116, down: 121, left: 123, right: 124 } as Record<string, number>)[direction]
     if (!keyCode) return { content: 'Error: direction must be up, down, left, or right', isError: true }
     const amount = Math.max(1, Math.min(20, Math.floor(optionalNumberArg(input.amount) ?? 3)))
+    const focusTarget = hasValue(input.element_index) ? resolveElementTarget(input.element_index) : null
+    if (focusTarget && 'content' in focusTarget) return focusTarget
+    if (focusTarget) {
+      await runAppleScript([`tell application "System Events" to click at {${focusTarget.x}, ${focusTarget.y}}`])
+    }
     await runAppleScript(['tell application "System Events"', `repeat ${amount} times`, `key code ${keyCode}`, 'end repeat', 'end tell'])
-    return { content: `Scrolled ${direction} (${amount} event${amount === 1 ? '' : 's'}).` }
+    const focused = focusTarget ? ` after focusing ${focusTarget.source}` : ''
+    return { content: `Scrolled ${direction}${focused} (${amount} event${amount === 1 ? '' : 's'}).` }
   },
 }
 
@@ -278,9 +354,13 @@ const computerOpenAppTool: ToolHandler = {
     if (gated) return gated
     const app = String(input.app ?? '').trim()
     if (!app) return { content: 'Error: app is required', isError: true }
-    await runAppleScript([`tell application ${appleString(app)} to activate`])
+    await activateApp(app)
     return { content: `Activated ${app}.` }
   },
+}
+
+async function activateApp(app: string): Promise<void> {
+  await runAppleScript([`tell application ${appleString(app)} to activate`])
 }
 
 async function captureScreenshot(cwd: string): Promise<{ filePath: string; size: number }> {
@@ -290,6 +370,25 @@ async function captureScreenshot(cwd: string): Promise<{ filePath: string; size:
   await execFileAsync('/usr/sbin/screencapture', ['-x', filePath], { cwd })
   const info = await stat(filePath)
   return { filePath, size: info.size }
+}
+
+async function screenshotToImageContent(filePath: string): Promise<{ image?: ImageContent; error?: string }> {
+  try {
+    const raw = await readFile(filePath)
+    const compressed = await compressImageForAPI(raw.toString('base64'), 'image/png')
+    return {
+      image: {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: compressed.mediaType,
+          data: compressed.data,
+        },
+      },
+    }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 async function getFrontmostAppState(): Promise<{ appName: string; windowTitle: string }> {
@@ -309,10 +408,221 @@ async function getFrontmostAppState(): Promise<{ appName: string; windowTitle: s
   return { appName: appName.trim(), windowTitle: windowTitle.trim() }
 }
 
-async function runAppleScript(lines: string[]): Promise<string> {
+async function getAccessibilityElements(maxElements: number): Promise<AccessibilityElement[]> {
+  const stdout = await runAppleScript(buildAccessibilityTreeScript(maxElements), {
+    maxBufferBytes: 1024 * 1024,
+    timeoutMs: 8000,
+  })
+  return parseAccessibilityRows(stdout)
+}
+
+function buildAccessibilityTreeScript(maxElements: number): string[] {
+  return [
+    'global collectedRows',
+    'global collectedCount',
+    'global collectedLimit',
+    'set collectedRows to {}',
+    'set collectedCount to 0',
+    `set collectedLimit to ${maxElements}`,
+    'on replaceText(theText, searchString, replacementString)',
+    'set oldDelimiters to AppleScript\'s text item delimiters',
+    'set AppleScript\'s text item delimiters to searchString',
+    'set textItems to text items of theText',
+    'set AppleScript\'s text item delimiters to replacementString',
+    'set replacedText to textItems as text',
+    'set AppleScript\'s text item delimiters to oldDelimiters',
+    'return replacedText',
+    'end replaceText',
+    'on cleanText(valueText)',
+    'try',
+    'if valueText is missing value then return ""',
+    'set outputText to valueText as text',
+    'set outputText to my replaceText(outputText, (ASCII character 9), " ")',
+    'set outputText to my replaceText(outputText, (ASCII character 10), " ")',
+    'set outputText to my replaceText(outputText, (ASCII character 13), " ")',
+    'return outputText',
+    'on error',
+    'return ""',
+    'end try',
+    'end cleanText',
+    'on collectElement(theElement, depth)',
+    'global collectedRows',
+    'global collectedCount',
+    'global collectedLimit',
+    'if collectedCount >= collectedLimit then return',
+    'set roleText to ""',
+    'set nameText to ""',
+    'set valueText to ""',
+    'set descriptionText to ""',
+    'set helpText to ""',
+    'set enabledText to ""',
+    'set focusedText to ""',
+    'set xText to ""',
+    'set yText to ""',
+    'set widthText to ""',
+    'set heightText to ""',
+    'try',
+    'set roleText to my cleanText(role of theElement)',
+    'end try',
+    'try',
+    'set nameText to my cleanText(name of theElement)',
+    'end try',
+    'try',
+    'set valueText to my cleanText(value of theElement)',
+    'end try',
+    'try',
+    'set descriptionText to my cleanText(description of theElement)',
+    'end try',
+    'try',
+    'set helpText to my cleanText(help of theElement)',
+    'end try',
+    'try',
+    'set enabledText to enabled of theElement as text',
+    'end try',
+    'try',
+    'set focusedText to focused of theElement as text',
+    'end try',
+    'try',
+    'set elementPosition to position of theElement',
+    'set elementSize to size of theElement',
+    'set xText to item 1 of elementPosition as text',
+    'set yText to item 2 of elementPosition as text',
+    'set widthText to item 1 of elementSize as text',
+    'set heightText to item 2 of elementSize as text',
+    'end try',
+    'if xText is not "" and yText is not "" and widthText is not "" and heightText is not "" then',
+    'set rowIndex to collectedCount',
+    'set rowText to (rowIndex as text) & (ASCII character 9) & (depth as text) & (ASCII character 9) & roleText & (ASCII character 9) & xText & (ASCII character 9) & yText & (ASCII character 9) & widthText & (ASCII character 9) & heightText & (ASCII character 9) & enabledText & (ASCII character 9) & focusedText & (ASCII character 9) & nameText & (ASCII character 9) & valueText & (ASCII character 9) & descriptionText & (ASCII character 9) & helpText',
+    'set end of collectedRows to rowText',
+    'set collectedCount to collectedCount + 1',
+    'end if',
+    'try',
+    'set childElements to UI elements of theElement',
+    'repeat with childElement in childElements',
+    'if collectedCount >= collectedLimit then exit repeat',
+    'my collectElement(childElement, depth + 1)',
+    'end repeat',
+    'end try',
+    'end collectElement',
+    'tell application "System Events"',
+    'set frontApp to first application process whose frontmost is true',
+    'try',
+    'set frontWindow to front window of frontApp',
+    'my collectElement(frontWindow, 0)',
+    'on error',
+    'my collectElement(frontApp, 0)',
+    'end try',
+    'end tell',
+    'set AppleScript\'s text item delimiters to linefeed',
+    'return collectedRows as text',
+  ]
+}
+
+function parseAccessibilityRows(stdout: string): AccessibilityElement[] {
+  return stdout.split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line): AccessibilityElement | null => {
+      const fields = line.split('\t')
+      if (fields.length < 13) return null
+      const [index, depth, role, x, y, width, height, enabled, focused, name, value, description, help] = fields
+      const parsed = {
+        index: numberField(index),
+        depth: numberField(depth),
+        x: numberField(x),
+        y: numberField(y),
+        width: numberField(width),
+        height: numberField(height),
+      }
+      if (Object.values(parsed).some(value => value === undefined)) return null
+      if (parsed.width! <= 0 || parsed.height! <= 0) return null
+      return {
+        index: parsed.index!,
+        depth: parsed.depth!,
+        role: cleanDisplayText(role),
+        x: parsed.x!,
+        y: parsed.y!,
+        width: parsed.width!,
+        height: parsed.height!,
+        enabled: cleanDisplayText(enabled),
+        focused: cleanDisplayText(focused),
+        name: cleanDisplayText(name),
+        value: cleanDisplayText(value),
+        description: cleanDisplayText(description),
+        help: cleanDisplayText(help),
+      }
+    })
+    .filter((element): element is AccessibilityElement => Boolean(element))
+}
+
+function formatAccessibilityTree(elements: AccessibilityElement[]): string[] {
+  if (elements.length === 0) return ['accessibility_tree: (empty or unavailable)']
+  return [
+    'accessibility_tree:',
+    ...elements.map(element => formatAccessibilityElement(element)),
+  ]
+}
+
+function formatAccessibilityElement(element: AccessibilityElement): string {
+  const indent = '  '.repeat(Math.min(element.depth, 4))
+  const flags = [
+    element.enabled ? `enabled=${element.enabled}` : '',
+    element.focused ? `focused=${element.focused}` : '',
+  ].filter(Boolean)
+  const labels = [
+    element.name ? `name=${quoteForDisplay(element.name)}` : '',
+    element.value ? `value=${quoteForDisplay(element.value)}` : '',
+    element.description ? `description=${quoteForDisplay(element.description)}` : '',
+    element.help ? `help=${quoteForDisplay(element.help)}` : '',
+  ].filter(Boolean)
+  return `${indent}[${element.index}] role=${element.role || '(unknown)'} frame=(${element.x},${element.y},${element.width},${element.height}) ${[...flags, ...labels].join(' ')}`.trimEnd()
+}
+
+function resolveClickTarget(input: Record<string, unknown>): ClickTarget | ToolResult {
+  if (hasValue(input.element_index)) return resolveElementTarget(input.element_index)
+  const x = optionalNumberArg(input.x)
+  const y = optionalNumberArg(input.y)
+  if (x === undefined || y === undefined) {
+    return {
+      content: 'Error: provide element_index from computer_get_app_state, or provide both x and y coordinates.',
+      isError: true,
+    }
+  }
+  return { x, y, source: 'coordinate target' }
+}
+
+function resolveElementTarget(value: unknown): ClickTarget | ToolResult {
+  const index = optionalElementIndexArg(value)
+  if (index === undefined) {
+    return { content: 'Error: element_index must be a non-negative number from computer_get_app_state.', isError: true }
+  }
+  if (!latestAccessibilitySnapshot) {
+    return { content: 'Error: element_index requires a recent computer_get_app_state result in this session.', isError: true }
+  }
+  const element = latestAccessibilitySnapshot.elements.find(candidate => candidate.index === index)
+  if (!element) {
+    return {
+      content: `Error: element_index ${index} was not found in the latest computer_get_app_state result. Call computer_get_app_state again and use one of the returned indexes.`,
+      isError: true,
+    }
+  }
+  const x = Math.round(element.x + element.width / 2)
+  const y = Math.round(element.y + element.height / 2)
+  return {
+    x,
+    y,
+    source: `element_index ${element.index}${elementLabel(element) ? ` ${quoteForDisplay(elementLabel(element))}` : ''}`,
+    element,
+  }
+}
+
+async function runAppleScript(lines: string[], options: { maxBufferBytes?: number; timeoutMs?: number } = {}): Promise<string> {
   const args = lines.flatMap(line => ['-e', line])
   try {
-    const { stdout } = await execFileAsync('/usr/bin/osascript', args)
+    const { stdout } = await execFileAsync('/usr/bin/osascript', args, {
+      ...(options.maxBufferBytes ? { maxBuffer: options.maxBufferBytes } : {}),
+      ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
+    })
     return String(stdout ?? '').trim()
   } catch (err) {
     throw new Error(formatAppleScriptError(err))
@@ -338,10 +648,47 @@ function numberArg(value: unknown, name: string): number {
   return parsed
 }
 
+function numberField(value: string): number | undefined {
+  if (!value.trim()) return undefined
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return undefined
+  return Math.round(parsed)
+}
+
 function optionalNumberArg(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value)
   if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Math.round(Number(value))
   return undefined
+}
+
+function optionalElementIndexArg(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value
+  if (typeof value === 'string') {
+    const match = value.trim().match(/^\[?#?(\d+)\]?$/)
+    if (match) return Number(match[1])
+  }
+  return undefined
+}
+
+function boundedInteger(value: number | undefined, fallback: number, min: number, max: number): number {
+  const resolved = value ?? fallback
+  return Math.max(min, Math.min(max, Math.floor(resolved)))
+}
+
+function hasValue(value: unknown): boolean {
+  return value !== undefined && value !== null && String(value).trim().length > 0
+}
+
+function cleanDisplayText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 160)
+}
+
+function elementLabel(element: AccessibilityElement): string {
+  return element.name || element.value || element.description || element.help || element.role
+}
+
+function quoteForDisplay(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
 function appleString(value: string): string {

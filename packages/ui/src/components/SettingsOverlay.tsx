@@ -298,7 +298,7 @@ function ToolsTab() {
             />
             <span>
               <span className="block text-[13px] text-[var(--text)]">启用 Computer Use</span>
-              <span className="block mt-1">允许模型使用截图、点击、拖拽、输入、按键、滚动和打开应用等本机控制工具。</span>
+              <span className="block mt-1">允许模型使用截图、可访问性元素识别、点击、拖拽、输入、按键、滚动和打开应用等本机控制工具。</span>
             </span>
           </label>
           <div className="grid grid-cols-2 gap-2 text-[11px] text-[var(--muted)]">

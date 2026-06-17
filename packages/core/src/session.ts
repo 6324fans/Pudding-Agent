@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { v4 as uuid } from 'uuid'
 import path from 'node:path'
-import type { Message, ModelConfig, SessionConfig, StreamChunk, ToolDefinition } from './types.js'
+import type { ContentBlock, Message, ModelConfig, SessionConfig, StreamChunk, ToolDefinition } from './types.js'
 import type { ModelProvider } from './model-provider.js'
 import { ToolRegistry } from './tool-registry.js'
 import { ToolRunner, type ToolExecutionEvent, type PermissionCallback } from './tool-runner.js'
@@ -1136,11 +1136,15 @@ export class Session {
         is_error: r.is_error,
         metadata: r.metadata,
       }))
+      const toolResultImages = batchResults.flatMap(r => r.images ?? [])
+      const toolMessageContent: ContentBlock[] = toolResultImages.length > 0
+        ? [...toolResults, ...toolResultImages]
+        : toolResults
 
       const toolMessage: Message = {
         id: uuid(),
         role: 'user',
-        content: toolResults,
+        content: toolMessageContent,
         timestamp: Date.now(),
       }
       this.messages.push(toolMessage)

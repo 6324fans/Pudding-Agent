@@ -148,6 +148,41 @@ describe('OpenAIResponsesProvider', () => {
     expect(formatted[2]).toEqual({ role: 'user', content: 'follow up' })
   })
 
+  it('keeps images attached to tool result turns', () => {
+    const provider = new OpenAIResponsesProvider('test-key')
+    const formatted = (provider as any).formatInput([
+      {
+        id: '0',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'tc1', name: 'computer_get_app_state', input: {} }],
+        timestamp: 0,
+      },
+      {
+        id: '1',
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'tc1', content: 'screenshot_image: attached' },
+          { type: 'text', text: 'Screenshot follows.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc' } },
+        ],
+        timestamp: 0,
+      },
+    ])
+
+    expect(formatted[1]).toEqual({
+      type: 'function_call_output',
+      call_id: 'tc1',
+      output: 'screenshot_image: attached',
+    })
+    expect(formatted[2]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'input_text', text: 'Screenshot follows.' },
+        { type: 'input_image', image_url: 'data:image/png;base64,abc' },
+      ],
+    })
+  })
+
   it('emits Responses function calls at item completion to preserve text order', async () => {
     const provider = new OpenAIResponsesProvider('test-key')
     ;(provider as any).client = {
