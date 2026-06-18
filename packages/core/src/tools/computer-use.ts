@@ -21,6 +21,9 @@ export const COMPUTER_USE_TOOL_NAMES = [
   'computer_type_text',
   'computer_press_key',
   'computer_scroll',
+  'computer_set_value',
+  'computer_perform_action',
+  'computer_select_text',
   'computer_open_app',
 ] as const
 
@@ -40,6 +43,7 @@ interface AccessibilityElement {
   value: string
   description: string
   help: string
+  actions: string[]
 }
 
 interface AccessibilitySnapshot {
@@ -76,6 +80,9 @@ export function createComputerUseTools(): ToolHandler[] {
     computerTypeTextTool,
     computerPressKeyTool,
     computerScrollTool,
+    computerSetValueTool,
+    computerPerformActionTool,
+    computerSelectTextTool,
     computerOpenAppTool,
   ]
 }
@@ -241,12 +248,14 @@ const computerClickTool: ToolHandler = {
         x: { type: 'number', description: 'Absolute screen X coordinate.' },
         y: { type: 'number', description: 'Absolute screen Y coordinate.' },
         click_count: { type: 'number', description: 'Number of clicks. Defaults to 1.' },
+        app: { type: 'string', description: 'Optional application name to activate before clicking.' },
       },
     },
   },
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
+    await activateOptionalApp(input)
     const target = resolveClickTarget(input)
     if ('content' in target) return target
     const { x, y } = target
@@ -270,6 +279,7 @@ const computerDragTool: ToolHandler = {
         from_y: { type: 'number' },
         to_x: { type: 'number' },
         to_y: { type: 'number' },
+        app: { type: 'string', description: 'Optional application name to activate before dragging.' },
       },
       required: ['from_x', 'from_y', 'to_x', 'to_y'],
     },
@@ -277,6 +287,7 @@ const computerDragTool: ToolHandler = {
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
+    await activateOptionalApp(input)
     const fromX = numberArg(input.from_x, 'from_x')
     const fromY = numberArg(input.from_y, 'from_y')
     const toX = numberArg(input.to_x, 'to_x')
@@ -295,6 +306,7 @@ const computerTypeTextTool: ToolHandler = {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'Literal text to type.' },
+        app: { type: 'string', description: 'Optional application name to activate before typing.' },
       },
       required: ['text'],
     },
@@ -302,6 +314,7 @@ const computerTypeTextTool: ToolHandler = {
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
+    await activateOptionalApp(input)
     const text = String(input.text ?? '')
     if (!text) return { content: 'Error: text is required', isError: true }
     await runAppleScript([`tell application "System Events" to keystroke ${appleString(text)}`])
@@ -318,6 +331,7 @@ const computerPressKeyTool: ToolHandler = {
       type: 'object',
       properties: {
         key: { type: 'string', description: 'Key name or combination.' },
+        app: { type: 'string', description: 'Optional application name to activate before pressing the key.' },
       },
       required: ['key'],
     },
@@ -325,6 +339,7 @@ const computerPressKeyTool: ToolHandler = {
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
+    await activateOptionalApp(input)
     const key = String(input.key ?? '').trim()
     if (!key) return { content: 'Error: key is required', isError: true }
     await runAppleScript([keyToAppleScript(key)])
@@ -343,6 +358,7 @@ const computerScrollTool: ToolHandler = {
         direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
         amount: { type: 'number', description: 'Number of key events to send. Defaults to 3.' },
         element_index: { type: ['string', 'number'], description: 'Optional element index to click/focus before scrolling.' },
+        app: { type: 'string', description: 'Optional application name to activate before scrolling.' },
       },
       required: ['direction'],
     },
@@ -350,6 +366,7 @@ const computerScrollTool: ToolHandler = {
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const gated = gateComputerUse()
     if (gated) return gated
+    await activateOptionalApp(input)
     const direction = String(input.direction ?? '').toLowerCase()
     const keyCode = ({ up: 116, down: 121, left: 123, right: 124 } as Record<string, number>)[direction]
     if (!keyCode) return { content: 'Error: direction must be up, down, left, or right', isError: true }
@@ -362,6 +379,102 @@ const computerScrollTool: ToolHandler = {
     await runAppleScript(['tell application "System Events"', `repeat ${amount} times`, `key code ${keyCode}`, 'end repeat', 'end tell'])
     const focused = focusTarget ? ` after focusing ${focusTarget.source}` : ''
     return { content: `Scrolled ${direction}${focused} (${amount} event${amount === 1 ? '' : 's'}).` }
+  },
+}
+
+const computerSetValueTool: ToolHandler = {
+  definition: {
+    name: 'computer_set_value',
+    description:
+      'Set the AX value of a macOS accessibility element by element_index from computer_get_app_state. ' +
+      'Prefer this over click + type_text for text fields because it directly updates editable controls.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        element_index: { type: ['string', 'number'], description: 'Element index returned by computer_get_app_state.' },
+        value: { type: 'string', description: 'Value to assign to the accessibility element.' },
+        app: { type: 'string', description: 'Optional application name to activate before setting the value.' },
+      },
+      required: ['element_index', 'value'],
+    },
+  },
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const gated = gateComputerUse()
+    if (gated) return gated
+    await activateOptionalApp(input)
+    const target = resolveElementTarget(input.element_index)
+    if ('content' in target) return target
+    const value = String(input.value ?? '')
+    await runAppleScript(buildElementOperationScript(target.element!.index, [
+      `set value of targetElement to ${appleString(value)}`,
+      'return "value set"',
+    ]))
+    return { content: `Set value of ${target.source} to ${quoteForDisplay(value)}.` }
+  },
+}
+
+const computerPerformActionTool: ToolHandler = {
+  definition: {
+    name: 'computer_perform_action',
+    description:
+      'Perform an accessibility action exposed by an element from computer_get_app_state, such as AXPress. ' +
+      'Use actions listed in the accessibility tree when available.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        element_index: { type: ['string', 'number'], description: 'Element index returned by computer_get_app_state.' },
+        action: { type: 'string', description: 'Accessibility action name. Defaults to AXPress.' },
+        app: { type: 'string', description: 'Optional application name to activate before performing the action.' },
+      },
+      required: ['element_index'],
+    },
+  },
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const gated = gateComputerUse()
+    if (gated) return gated
+    await activateOptionalApp(input)
+    const target = resolveElementTarget(input.element_index)
+    if ('content' in target) return target
+    const action = String(input.action ?? 'AXPress').trim() || 'AXPress'
+    await runAppleScript(buildElementOperationScript(target.element!.index, [
+      `perform action ${appleString(action)} of targetElement`,
+      `return ${appleString(`performed ${action}`)}`,
+    ]))
+    return { content: `Performed ${action} on ${target.source}.` }
+  },
+}
+
+const computerSelectTextTool: ToolHandler = {
+  definition: {
+    name: 'computer_select_text',
+    description:
+      'Select all text in the focused macOS control, optionally focusing an element_index first and optionally replacing the selection. ' +
+      'This uses Cmd+A and keyboard text entry as a fallback-friendly text selection primitive.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        element_index: { type: ['string', 'number'], description: 'Optional element index to focus before selecting text.' },
+        replacement_text: { type: 'string', description: 'Optional text to type after selecting all text.' },
+        app: { type: 'string', description: 'Optional application name to activate before selecting text.' },
+      },
+    },
+  },
+  async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const gated = gateComputerUse()
+    if (gated) return gated
+    await activateOptionalApp(input)
+    const focusTarget = hasValue(input.element_index) ? resolveElementTarget(input.element_index) : null
+    if (focusTarget && 'content' in focusTarget) return focusTarget
+    if (focusTarget) {
+      await runAppleScript([`tell application "System Events" to click at {${focusTarget.x}, ${focusTarget.y}}`])
+    }
+    await runAppleScript([keyToAppleScript('Cmd+A')])
+    if (hasValue(input.replacement_text)) {
+      const replacement = String(input.replacement_text ?? '')
+      await runAppleScript([`tell application "System Events" to keystroke ${appleString(replacement)}`])
+      return { content: `Selected all text${focusTarget ? ` in ${focusTarget.source}` : ''} and typed ${replacement.length} replacement character${replacement.length === 1 ? '' : 's'}.` }
+    }
+    return { content: `Selected all text${focusTarget ? ` in ${focusTarget.source}` : ''}.` }
   },
 }
 
@@ -389,6 +502,11 @@ const computerOpenAppTool: ToolHandler = {
 
 async function activateApp(app: string): Promise<void> {
   await runAppleScript([`tell application ${appleString(app)} to activate`])
+}
+
+async function activateOptionalApp(input: Record<string, unknown>): Promise<void> {
+  const app = String(input.app ?? '').trim()
+  if (app) await activateApp(app)
 }
 
 async function captureScreenshot(cwd: string): Promise<{ filePath: string; size: number }> {
@@ -483,6 +601,7 @@ function buildAccessibilityTreeScript(maxElements: number): string[] {
     'set valueText to ""',
     'set descriptionText to ""',
     'set helpText to ""',
+    'set actionsText to ""',
     'set enabledText to ""',
     'set focusedText to ""',
     'set xText to ""',
@@ -503,6 +622,13 @@ function buildAccessibilityTreeScript(maxElements: number): string[] {
     'end try',
     '-- Some applications expose AXHelp, but AppleScript does not provide a portable "help of" property here.',
     'try',
+    'tell application "System Events" to set actionNames to name of actions of theElement',
+    'set oldDelimiters to AppleScript\'s text item delimiters',
+    'set AppleScript\'s text item delimiters to ","',
+    'set actionsText to actionNames as text',
+    'set AppleScript\'s text item delimiters to oldDelimiters',
+    'end try',
+    'try',
     'set enabledText to enabled of theElement as text',
     'end try',
     'try',
@@ -518,7 +644,7 @@ function buildAccessibilityTreeScript(maxElements: number): string[] {
     'end try',
     'if xText is not "" and yText is not "" and widthText is not "" and heightText is not "" then',
     'set rowIndex to collectedCount',
-    'set rowText to (rowIndex as text) & (ASCII character 9) & (depth as text) & (ASCII character 9) & roleText & (ASCII character 9) & xText & (ASCII character 9) & yText & (ASCII character 9) & widthText & (ASCII character 9) & heightText & (ASCII character 9) & enabledText & (ASCII character 9) & focusedText & (ASCII character 9) & nameText & (ASCII character 9) & valueText & (ASCII character 9) & descriptionText & (ASCII character 9) & helpText',
+    'set rowText to (rowIndex as text) & (ASCII character 9) & (depth as text) & (ASCII character 9) & roleText & (ASCII character 9) & xText & (ASCII character 9) & yText & (ASCII character 9) & widthText & (ASCII character 9) & heightText & (ASCII character 9) & enabledText & (ASCII character 9) & focusedText & (ASCII character 9) & nameText & (ASCII character 9) & valueText & (ASCII character 9) & descriptionText & (ASCII character 9) & helpText & (ASCII character 9) & actionsText',
     'set end of collectedRows to rowText',
     'set collectedCount to collectedCount + 1',
     'end if',
@@ -551,7 +677,7 @@ function parseAccessibilityRows(stdout: string): AccessibilityElement[] {
     .map((line): AccessibilityElement | null => {
       const fields = line.split('\t')
       if (fields.length < 13) return null
-      const [index, depth, role, x, y, width, height, enabled, focused, name, value, description, help] = fields
+      const [index, depth, role, x, y, width, height, enabled, focused, name, value, description, help, actions = ''] = fields
       const parsed = {
         index: numberField(index),
         depth: numberField(depth),
@@ -576,6 +702,7 @@ function parseAccessibilityRows(stdout: string): AccessibilityElement[] {
         value: cleanDisplayText(value),
         description: cleanDisplayText(description),
         help: cleanDisplayText(help),
+        actions: splitActionList(actions),
       }
     })
     .filter((element): element is AccessibilityElement => Boolean(element))
@@ -600,8 +727,61 @@ function formatAccessibilityElement(element: AccessibilityElement): string {
     element.value ? `value=${quoteForDisplay(element.value)}` : '',
     element.description ? `description=${quoteForDisplay(element.description)}` : '',
     element.help ? `help=${quoteForDisplay(element.help)}` : '',
+    element.actions.length > 0 ? `actions=${quoteForDisplay(element.actions.join(','))}` : '',
   ].filter(Boolean)
   return `${indent}[${element.index}] role=${element.role || '(unknown)'} frame=(${element.x},${element.y},${element.width},${element.height}) ${[...flags, ...labels].join(' ')}`.trimEnd()
+}
+
+function buildElementOperationScript(index: number, operationLines: string[]): string[] {
+  return [
+    'global targetIndex',
+    'global currentIndex',
+    'global targetElement',
+    `set targetIndex to ${index}`,
+    'set currentIndex to 0',
+    'set targetElement to missing value',
+    'on elementHasFrame(theElement)',
+    'try',
+    'set elementSize to size of theElement',
+    'if (item 1 of elementSize) <= 0 or (item 2 of elementSize) <= 0 then return false',
+    'set elementPosition to position of theElement',
+    'return true',
+    'on error',
+    'return false',
+    'end try',
+    'end elementHasFrame',
+    'on findElement(theElement)',
+    'global targetIndex',
+    'global currentIndex',
+    'global targetElement',
+    'if targetElement is not missing value then return',
+    'if my elementHasFrame(theElement) then',
+    'if currentIndex = targetIndex then',
+    'set targetElement to theElement',
+    'return',
+    'end if',
+    'set currentIndex to currentIndex + 1',
+    'end if',
+    'try',
+    'tell application "System Events" to set childElements to UI elements of theElement',
+    'repeat with childElement in childElements',
+    'if targetElement is not missing value then exit repeat',
+    'my findElement(childElement)',
+    'end repeat',
+    'end try',
+    'end findElement',
+    'tell application "System Events"',
+    'set frontApp to first application process whose frontmost is true',
+    'try',
+    'set rootElement to front window of frontApp',
+    'on error',
+    'set rootElement to frontApp',
+    'end try',
+    'my findElement(rootElement)',
+    `if targetElement is missing value then error ${appleString(`element_index ${index} was not found in the current accessibility tree`)}`,
+    ...operationLines,
+    'end tell',
+  ]
 }
 
 function resolveClickTarget(input: Record<string, unknown>): ClickTarget | ToolResult {
@@ -711,6 +891,10 @@ function hasValue(value: unknown): boolean {
 
 function cleanDisplayText(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 160)
+}
+
+function splitActionList(value: string): string[] {
+  return cleanDisplayText(value).split(',').map(action => action.trim()).filter(Boolean)
 }
 
 function elementLabel(element: AccessibilityElement): string {

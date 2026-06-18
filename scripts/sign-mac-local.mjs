@@ -60,7 +60,7 @@ Pudding-Agent.app so macOS TCC permissions for Computer Use are stable.
 Environment:
   PUDDING_LOCAL_SIGN_CERT                Certificate common name.
   PUDDING_LOCAL_SIGN_KEYCHAIN            Dedicated keychain path.
-  PUDDING_LOCAL_SIGN_KEYCHAIN_PASSWORD   Dedicated keychain password.
+  PUDDING_LOCAL_SIGN_KEYCHAIN_PASSWORD   Dedicated keychain password. Default: pudding-local-codesign.
 `)
 }
 
@@ -241,6 +241,12 @@ function main() {
   requireMacOS()
   ensureTool('openssl')
   if (!existsSync(args.app)) throw new Error(`App not found: ${args.app}`)
+
+  if (!process.env.PUDDING_LOCAL_SIGN_KEYCHAIN_PASSWORD) {
+    console.log('If macOS asks to unlock "pudding-local-codesign", use password: pudding-local-codesign')
+  } else {
+    console.log('If macOS asks to unlock the local signing keychain, use PUDDING_LOCAL_SIGN_KEYCHAIN_PASSWORD.')
+  }
 
   ensureDedicatedKeychain()
   const identity = ensureIdentity()

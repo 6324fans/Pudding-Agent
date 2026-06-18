@@ -298,11 +298,11 @@ function ToolsTab() {
             />
             <span>
               <span className="block text-[13px] text-[var(--text)]">启用 Computer Use</span>
-              <span className="block mt-1">允许模型使用截图、可访问性元素识别、点击、拖拽、输入、按键、滚动和打开应用等本机控制工具。</span>
+              <span className="block mt-1">允许模型使用截图、可访问性元素识别、点击、拖拽、输入、按键、滚动、设置控件值、执行控件动作和打开应用等本机控制工具。</span>
             </span>
           </label>
           <div className="grid grid-cols-2 gap-2 text-[11px] text-[var(--muted)]">
-            {['computer_get_app_state', 'computer_list_apps', 'computer_screenshot', 'computer_click', 'computer_drag', 'computer_type_text', 'computer_press_key', 'computer_scroll', 'computer_open_app'].map((tool) => (
+            {['computer_get_app_state', 'computer_list_apps', 'computer_screenshot', 'computer_click', 'computer_drag', 'computer_type_text', 'computer_press_key', 'computer_scroll', 'computer_set_value', 'computer_perform_action', 'computer_select_text', 'computer_open_app'].map((tool) => (
               <span key={tool} className="font-mono rounded-[4px] border border-[var(--border)] bg-[var(--surface)] px-2 py-1">
                 {tool}
               </span>

@@ -11,9 +11,9 @@ corepack pnpm mac:install-local
 
 这个命令会完成三件事：
 
-1. 执行 `corepack pnpm package`。
+1. 构建 unsigned macOS `.app` 目录（禁用 electron-builder 自动签名和在线 timestamp）。
 2. 用 `out/mac-arm64/Pudding-Agent.app` 替换 `/Applications/Pudding-Agent.app`。
-3. 使用 `Pudding Dedicated Local Code Signing` 执行本地签名。
+3. 使用 `Pudding Dedicated Local Code Signing` 执行本地离线签名（`--timestamp=none`）。
 
 安装步骤默认会清除 `com.apple.quarantine`，并重置 macOS TCC 中的
 AppleEvents、Accessibility、ScreenCapture 权限记录。重新打开 app 后，
@@ -64,6 +64,14 @@ corepack pnpm mac:sign-local -- --app /Applications/Pudding-Agent.app --clear-qu
 ```text
 Pudding Dedicated Local Code Signing
 ```
+
+默认钥匙串密码：
+
+```text
+pudding-local-codesign
+```
+
+如果 macOS 弹出 `"codesign" 想使用 "pudding-local-codesign" 钥匙串`，输入上面的默认密码即可。只有设置了 `PUDDING_LOCAL_SIGN_KEYCHAIN_PASSWORD` 环境变量时，才使用自定义密码。
 
 可以通过环境变量覆盖这些默认值：
 

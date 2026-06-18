@@ -11,6 +11,7 @@ function run(command, args, options = {}) {
     cwd: rootDir,
     encoding: 'utf8',
     stdio: options.stdio || 'inherit',
+    env: options.env || process.env,
   })
 }
 
@@ -71,6 +72,11 @@ Options:
   --skip-package                         Reuse the existing built app instead of running pnpm package.
   --no-reset-tcc                         Keep current AppleEvents/Accessibility/ScreenCapture approvals.
   --no-clear-quarantine                  Do not remove com.apple.quarantine before signing.
+
+Local packaging intentionally disables electron-builder code-signing and only
+builds the .app directory. The installed app is then signed offline by
+scripts/sign-mac-local.mjs with --timestamp=none, avoiding timestamp service
+or certificate auto-discovery failures during local installs.
 `)
 }
 
@@ -98,6 +104,18 @@ function installApp(sourcePath, appPath) {
   run('/usr/bin/ditto', [sourcePath, appPath])
 }
 
+function packageUnsignedAppForLocalInstall() {
+  console.log('Building unsigned macOS app for local install...')
+  run('corepack', ['pnpm', 'build'])
+  run(process.execPath, ['scripts/fix-node-pty-permissions.mjs'])
+  run('corepack', ['pnpm', 'exec', 'electron-builder', '--mac', 'dir', '--publish', 'never'], {
+    env: {
+      ...process.env,
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+    },
+  })
+}
+
 function signApp(appPath, args) {
   const signArgs = ['scripts/sign-mac-local.mjs', '--app', appPath]
   if (!args.resetTcc) signArgs.push('--no-reset-tcc')
@@ -115,7 +133,7 @@ function main() {
   requireMacOS()
 
   if (args.package) {
-    run('corepack', ['pnpm', 'package'])
+    packageUnsignedAppForLocalInstall()
   }
 
   quitInstalledApp()
