@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { createBrowserOpenTool } from '../tools/browser-open.js'
-import { COMPUTER_USE_TOOL_NAMES, computerUseTestInternals, createComputerUseTools, isComputerUseToolName } from '../tools/computer-use.js'
 import { createSkillListTool } from '../tools/skill-list.js'
 
 describe('host capability tools', () => {
@@ -15,48 +14,6 @@ describe('host capability tools', () => {
     const valid = await tool.execute({ url: 'https://example.com/path' }, { cwd: '/' })
     expect(valid.isError).toBeUndefined()
     expect(opened).toEqual(['https://example.com/path'])
-  })
-
-  it('computer use exposes the expected host control tools', () => {
-    const tools = createComputerUseTools()
-    const names = tools.map(tool => tool.definition.name)
-
-    expect(names).toEqual([...COMPUTER_USE_TOOL_NAMES])
-    expect(names.every(isComputerUseToolName)).toBe(true)
-    expect(tools.every(tool => tool.definition.inputSchema.type === 'object')).toBe(true)
-  })
-
-  it('computer use exposes indexed UI targeting in tool schemas', () => {
-    const tools = Object.fromEntries(createComputerUseTools().map(tool => [tool.definition.name, tool]))
-    const getStateSchema = tools.computer_get_app_state.definition.inputSchema as any
-    const clickSchema = tools.computer_click.definition.inputSchema as any
-    const scrollSchema = tools.computer_scroll.definition.inputSchema as any
-    const setValueSchema = tools.computer_set_value.definition.inputSchema as any
-    const performActionSchema = tools.computer_perform_action.definition.inputSchema as any
-    const selectTextSchema = tools.computer_select_text.definition.inputSchema as any
-
-    expect(getStateSchema.properties.app).toBeTruthy()
-    expect(getStateSchema.properties.max_elements).toBeTruthy()
-    expect(clickSchema.properties.element_index).toBeTruthy()
-    expect(clickSchema.properties.app).toBeTruthy()
-    expect(clickSchema.required).toBeUndefined()
-    expect(scrollSchema.properties.element_index).toBeTruthy()
-    expect(scrollSchema.properties.app).toBeTruthy()
-    expect(setValueSchema.properties.element_index).toBeTruthy()
-    expect(setValueSchema.properties.value).toBeTruthy()
-    expect(setValueSchema.required).toEqual(['element_index', 'value'])
-    expect(performActionSchema.properties.action).toBeTruthy()
-    expect(performActionSchema.required).toEqual(['element_index'])
-    expect(selectTextSchema.properties.replacement_text).toBeTruthy()
-  })
-
-  it('computer use accessibility script scopes UI element traversal to System Events', () => {
-    const script = computerUseTestInternals.buildAccessibilityTreeScript(3)
-
-    expect(script).toContain('tell application "System Events" to set childElements to UI elements of theElement')
-    expect(script).toContain('tell application "System Events" to set actionNames to name of actions of theElement')
-    expect(script).not.toContain('set childElements to UI elements of theElement')
-    expect(script.some(line => line.includes('help of theElement'))).toBe(false)
   })
 
   it('skill_list reports empty skill state clearly', async () => {

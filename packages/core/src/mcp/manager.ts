@@ -1,7 +1,14 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import type { ImageContent } from '../types.js'
+import { compressImageForAPI } from '../utils/image-resizer.js'
 import type { McpServerConfig, McpServerState, McpToolInfo, McpConnectionStatus } from './types.js'
+
+const MAX_MCP_TEXT_RESULT_CHARS = 120000
+const MCP_TEXT_HEAD_CHARS = 60000
+const MCP_TEXT_TAIL_CHARS = 60000
+const MAX_MCP_IMAGE_BASE64_CHARS = 500000
 
 interface ConnectedServer {
   name: string
@@ -113,7 +120,7 @@ export class McpManager {
     return tools
   }
 
-  async callTool(fullName: string, args: Record<string, unknown>): Promise<{ content: string; isError?: boolean }> {
+  async callTool(fullName: string, args: Record<string, unknown>): Promise<{ content: string; isError?: boolean; images?: ImageContent[] }> {
     const parts = fullName.split('__')
     if (parts.length < 3 || parts[0] !== 'mcp') {
       return { content: `Invalid MCP tool name: ${fullName}`, isError: true }
@@ -126,10 +133,8 @@ export class McpManager {
     }
     try {
       const result = await server.client!.callTool({ name: toolName, arguments: args })
-      const text = (result.content as Array<{ type: string; text?: string }>)
-        ?.map(c => c.type === 'text' ? c.text : JSON.stringify(c))
-        .join('\n') || ''
-      return { content: text, isError: result.isError as boolean | undefined }
+      const parsed = await normalizeMcpToolContent(result.content)
+      return { content: parsed.content, isError: result.isError as boolean | undefined, images: parsed.images }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       return { content: `MCP tool error: ${message}`, isError: true }
@@ -184,4 +189,79 @@ export class McpManager {
       return new SSEClientTransport(new URL(config.url))
     }
   }
+}
+
+async function normalizeMcpToolContent(content: unknown): Promise<{ content: string; images: ImageContent[] }> {
+  const blocks = Array.isArray(content) ? content : []
+  const textParts: string[] = []
+  const images: ImageContent[] = []
+
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') continue
+    const typed = block as Record<string, unknown>
+
+    if (typed.type === 'text') {
+      textParts.push(typeof typed.text === 'string' ? typed.text : '')
+      continue
+    }
+
+    if (typed.type === 'image') {
+      const image = await normalizeMcpImageContent(typed)
+      if (image) {
+        images.push(image)
+        textParts.push(`[image ${images.length}: ${image.source.media_type}]`)
+      } else {
+        textParts.push('[image omitted: unsupported MCP image content]')
+      }
+      continue
+    }
+
+    textParts.push(JSON.stringify(typed))
+  }
+
+  return {
+    content: truncateMcpTextResult(textParts.filter(Boolean).join('\n')),
+    images,
+  }
+}
+
+async function normalizeMcpImageContent(block: Record<string, unknown>): Promise<ImageContent | null> {
+  if (block.type !== 'image') return null
+  const rawData = typeof block.data === 'string'
+    ? block.data
+    : typeof block.base64 === 'string'
+      ? block.base64
+      : undefined
+  if (!rawData) return null
+
+  const mimeType = typeof block.mimeType === 'string'
+    ? block.mimeType
+    : typeof block.mime_type === 'string'
+      ? block.mime_type
+      : 'image/png'
+  const base64Data = rawData.includes(',') ? rawData.split(',').pop() || '' : rawData
+
+  try {
+    const compressed = await compressImageForAPI(base64Data, mimeType, {
+      maxBase64Size: MAX_MCP_IMAGE_BASE64_CHARS,
+      maxWidth: 1600,
+      maxHeight: 1600,
+    })
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: compressed.mediaType,
+        data: compressed.data,
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
+function truncateMcpTextResult(value: string): string {
+  if (value.length <= MAX_MCP_TEXT_RESULT_CHARS) return value
+  const removed = value.length - MCP_TEXT_HEAD_CHARS - MCP_TEXT_TAIL_CHARS
+  return `${value.slice(0, MCP_TEXT_HEAD_CHARS)}\n\n... [MCP tool result truncated: ${removed} chars removed] ...\n\n${value.slice(-MCP_TEXT_TAIL_CHARS)}`
 }

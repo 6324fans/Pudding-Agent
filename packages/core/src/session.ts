@@ -55,7 +55,6 @@ import { createBackgroundStatusTool } from './tools/background-status.js'
 import { createBackgroundEventsTool } from './tools/background-events.js'
 import { createTeamListTool } from './tools/team-list.js'
 import { createTeamAddTaskTool } from './tools/team-add-task.js'
-import { isComputerUseEnabled, isComputerUseToolName } from './tools/computer-use.js'
 import { buildContextBundle, type ContextProvider } from './context/orchestrator.js'
 import { mainSessionProfile } from './context/actor-profile.js'
 import { DEFAULT_CONTEXT_ENGINE_CONFIG, resolveContextEngineConfig, type ContextEngineConfigInput } from './context/config.js'
@@ -1417,10 +1416,8 @@ export class Session {
     }
   }
 
-  private getAvailableToolDefinitions(appConfig: Record<string, any> = loadAppConfig()): ToolDefinition[] {
-    const toolDefs = this.toolRegistry.getDefinitions()
-    if (isComputerUseEnabled(appConfig)) return toolDefs
-    return toolDefs.filter(tool => !isComputerUseToolName(tool.name))
+  private getAvailableToolDefinitions(_appConfig: Record<string, any> = loadAppConfig()): ToolDefinition[] {
+    return this.toolRegistry.getDefinitions()
   }
 
   private async createContextRequest(userMessage: string): Promise<ContextRequest> {

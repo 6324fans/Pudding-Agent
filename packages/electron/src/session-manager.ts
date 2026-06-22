@@ -15,6 +15,7 @@ import {
 } from '@puddingagent/core'
 import type { ToolExecutionEvent } from '@puddingagent/core'
 import { Notification, shell, type BrowserWindow } from 'electron'
+import { OCU_MCP_SERVER_NAME, resolveOpenComputerUseServerConfig } from './open-computer-use.js'
 
 export interface PendingPermissionInfo {
   id: string
@@ -973,6 +974,24 @@ export class SessionManager {
   async initMcp(cwd: string): Promise<void> {
     const configs = loadMcpConfig(cwd)
     await this.mcpManager.loadConfig(configs)
+    await this.syncComputerUseMcpServer()
+  }
+
+  /**
+   * Connect (or disconnect) the bundled open-computer-use MCP server based on
+   * the Computer Use setting. The server provides the 9 desktop-control tools
+   * (git's native Swift implementation); nothing is downloaded — the binary is
+   * bundled inside Pudding-Agent.
+   */
+  async syncComputerUseMcpServer(): Promise<void> {
+    const enabled = loadAppConfig()?.computerUse?.enabled === true
+    const config = enabled ? resolveOpenComputerUseServerConfig() : null
+    const connected = this.mcpManager.getServerStates().some(s => s.name === OCU_MCP_SERVER_NAME)
+    if (enabled && config) {
+      if (!connected) await this.mcpManager.connectServer(OCU_MCP_SERVER_NAME, config)
+    } else if (connected) {
+      await this.mcpManager.disconnectServer(OCU_MCP_SERVER_NAME)
+    }
   }
 
   async reloadMcp(cwd?: string): Promise<void> {

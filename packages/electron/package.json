@@ -20,6 +20,7 @@
   "dependencies": {
     "electron-updater": "^6.8.3",
     "node-pty": "^1.1.0",
+    "open-computer-use": "^0.1.53",
     "sharp": "^0.34.5",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.25.10"

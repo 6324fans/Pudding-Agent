@@ -1,8 +1,8 @@
 import sharp from 'sharp'
 import {
+  API_IMAGE_MAX_BASE64_SIZE,
   IMAGE_MAX_HEIGHT,
   IMAGE_MAX_WIDTH,
-  IMAGE_TARGET_RAW_SIZE,
   type ImageMediaType,
 } from './image-constants.js'
 
@@ -11,10 +11,21 @@ export interface CompressedImage {
   mediaType: ImageMediaType
 }
 
+export interface CompressImageOptions {
+  maxBase64Size?: number
+  maxWidth?: number
+  maxHeight?: number
+}
+
 export async function compressImageForAPI(
   base64Data: string,
   mediaType: string,
+  options: CompressImageOptions = {},
 ): Promise<CompressedImage> {
+  const maxBase64Size = options.maxBase64Size ?? API_IMAGE_MAX_BASE64_SIZE
+  const targetRawSize = (maxBase64Size * 3) / 4
+  const maxWidth = options.maxWidth ?? IMAGE_MAX_WIDTH
+  const maxHeight = options.maxHeight ?? IMAGE_MAX_HEIGHT
   const imageBuffer = Buffer.from(base64Data, 'base64')
   if (imageBuffer.length === 0) throw new Error('Image data is empty')
 
@@ -25,36 +36,36 @@ export async function compressImageForAPI(
   const height = metadata.height ?? 0
 
   if (
-    imageBuffer.length <= IMAGE_TARGET_RAW_SIZE &&
-    width <= IMAGE_MAX_WIDTH &&
-    height <= IMAGE_MAX_HEIGHT
+    imageBuffer.length <= targetRawSize &&
+    width <= maxWidth &&
+    height <= maxHeight
   ) {
     return { data: base64Data, mediaType: `image/${format}` as ImageMediaType }
   }
 
-  const needsResize = width > IMAGE_MAX_WIDTH || height > IMAGE_MAX_HEIGHT
-  if (!needsResize && imageBuffer.length > IMAGE_TARGET_RAW_SIZE) {
-    const compressed = await tryCompressionOnly(imageBuffer, isPng)
+  const needsResize = width > maxWidth || height > maxHeight
+  if (!needsResize && imageBuffer.length > targetRawSize) {
+    const compressed = await tryCompressionOnly(imageBuffer, isPng, targetRawSize)
     if (compressed) return compressed
   }
 
-  let targetWidth = width || IMAGE_MAX_WIDTH
-  let targetHeight = height || IMAGE_MAX_HEIGHT
+  let targetWidth = width || maxWidth
+  let targetHeight = height || maxHeight
 
-  if (targetWidth > IMAGE_MAX_WIDTH) {
-    targetHeight = Math.round((targetHeight * IMAGE_MAX_WIDTH) / targetWidth)
-    targetWidth = IMAGE_MAX_WIDTH
+  if (targetWidth > maxWidth) {
+    targetHeight = Math.round((targetHeight * maxWidth) / targetWidth)
+    targetWidth = maxWidth
   }
-  if (targetHeight > IMAGE_MAX_HEIGHT) {
-    targetWidth = Math.round((targetWidth * IMAGE_MAX_HEIGHT) / targetHeight)
-    targetHeight = IMAGE_MAX_HEIGHT
+  if (targetHeight > maxHeight) {
+    targetWidth = Math.round((targetWidth * maxHeight) / targetHeight)
+    targetHeight = maxHeight
   }
 
   const resizedBuffer = await sharp(imageBuffer)
     .resize(targetWidth, targetHeight, { fit: 'inside', withoutEnlargement: true })
     .toBuffer()
 
-  if (resizedBuffer.length <= IMAGE_TARGET_RAW_SIZE) {
+  if (resizedBuffer.length <= targetRawSize) {
     const resizedMeta = await sharp(resizedBuffer).metadata()
     const outFormat = normalizeFormat(resizedMeta.format ?? format)
     return {
@@ -68,7 +79,7 @@ export async function compressImageForAPI(
       .resize(targetWidth, targetHeight, { fit: 'inside', withoutEnlargement: true })
       .png({ compressionLevel: 9, palette: true })
       .toBuffer()
-    if (pngCompressed.length <= IMAGE_TARGET_RAW_SIZE) {
+    if (pngCompressed.length <= targetRawSize) {
       return { data: pngCompressed.toString('base64'), mediaType: 'image/png' }
     }
   }
@@ -78,7 +89,7 @@ export async function compressImageForAPI(
       .resize(targetWidth, targetHeight, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality })
       .toBuffer()
-    if (jpegBuffer.length <= IMAGE_TARGET_RAW_SIZE) {
+    if (jpegBuffer.length <= targetRawSize) {
       return { data: jpegBuffer.toString('base64'), mediaType: 'image/jpeg' }
     }
   }
@@ -96,19 +107,20 @@ export async function compressImageForAPI(
 async function tryCompressionOnly(
   imageBuffer: Buffer,
   isPng: boolean,
+  targetRawSize: number,
 ): Promise<CompressedImage | null> {
   if (isPng) {
     const pngCompressed = await sharp(imageBuffer)
       .png({ compressionLevel: 9, palette: true })
       .toBuffer()
-    if (pngCompressed.length <= IMAGE_TARGET_RAW_SIZE) {
+    if (pngCompressed.length <= targetRawSize) {
       return { data: pngCompressed.toString('base64'), mediaType: 'image/png' }
     }
   }
 
   for (const quality of [80, 60, 40, 20]) {
     const jpegBuffer = await sharp(imageBuffer).jpeg({ quality }).toBuffer()
-    if (jpegBuffer.length <= IMAGE_TARGET_RAW_SIZE) {
+    if (jpegBuffer.length <= targetRawSize) {
       return { data: jpegBuffer.toString('base64'), mediaType: 'image/jpeg' }
     }
   }

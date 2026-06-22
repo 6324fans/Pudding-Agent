@@ -14,6 +14,12 @@ files:
   - ui/**/*
   - package.json
   - node_modules/node-pty/**/*
+  - node_modules/open-computer-use/**/*
+# The bundled open-computer-use native .app must be unpacked from app.asar so
+# its binary can be executed (asar is a virtual archive; native binaries inside
+# cannot be spawned).
+asarUnpack:
+  - node_modules/open-computer-use/**
 extraResources:
   - from: packages/electron/resources/codegraph
     to: codegraph

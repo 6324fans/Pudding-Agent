@@ -28,6 +28,14 @@ describe('createMcpToolHandler', () => {
     const result = await handler.execute({}, { cwd: '/tmp' })
     expect(result.isError).toBe(true)
   })
+
+  it('passes images through from manager', async () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc' } }
+    const mockManager = { callTool: async () => ({ content: 'ok', images: [image] }) } as any
+    const handler = createMcpToolHandler('s', { name: 't' }, mockManager)
+    const result = await handler.execute({}, { cwd: '/tmp' })
+    expect(result.images).toEqual([image])
+  })
 })
 
 describe('createListMcpResourcesTool', () => {

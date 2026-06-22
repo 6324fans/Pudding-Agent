@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      open-computer-use:
+        specifier: ^0.1.53
+        version: 0.1.53
     devDependencies:
       '@electron/notarize':
         specifier: ^3.1.1
@@ -117,6 +121,9 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+      open-computer-use:
+        specifier: ^0.1.53
+        version: 0.1.53
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -3806,6 +3813,10 @@ packages:
   onetime@5.1.2:
     resolution: {integrity: sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg==}
     engines: {node: '>=6'}
+
+  open-computer-use@0.1.53:
+    resolution: {integrity: sha512-5qwCPl7Gm4Wk2i/wFkq2dVLN2SzNRQSJTd95zXdGF+u5ZsUXkFx1IFVdNbYelWOpc4fgy8Z8/gYrbacj/2chig==}
+    hasBin: true
 
   open@10.2.0:
     resolution: {integrity: sha512-YgBpdJHPyQ2UE5x+hlSXcnejzAvD0b22U2OuAP+8OnlJT+PjWPxtgmGqKKc+RgTM63U9gN0YzrYc71R2WT/hTA==}
@@ -8794,6 +8805,8 @@ snapshots:
   onetime@5.1.2:
     dependencies:
       mimic-fn: 2.1.0
+
+  open-computer-use@0.1.53: {}
 
   open@10.2.0:
     dependencies:

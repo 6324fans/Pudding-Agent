@@ -132,6 +132,8 @@ export function registerIpcHandlers(sessionManager: SessionManager, services: De
 
   ipcMain.handle(IPC_CHANNELS.CONFIG_SET, async (_event, config) => {
     saveAppConfig(config)
+    // Computer Use toggle controls the bundled open-computer-use MCP server.
+    await sessionManager.syncComputerUseMcpServer()
     return { success: true }
   })
 

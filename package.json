@@ -46,5 +46,8 @@
       "@vscode/vsce-sign",
       "electron"
     ]
+  },
+  "dependencies": {
+    "open-computer-use": "^0.1.53"
   }
 }

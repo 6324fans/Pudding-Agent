@@ -16,7 +16,7 @@ export function createMcpToolHandler(
     },
     async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
       const result = await manager.callTool(fullName, input)
-      return { content: result.content, isError: result.isError }
+      return { content: result.content, isError: result.isError, images: result.images }
     },
   }
 }
